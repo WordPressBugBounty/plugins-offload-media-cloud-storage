@@ -1,0 +1,855 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=utf-8\n"
+"X-Generator: babel-plugin-makepot\n"
+
+#: src/components/Alert/index.jsx:16
+msgid "Error: "
+msgstr ""
+
+#: src/components/Alert/index.jsx:21
+msgid "Warning: "
+msgstr ""
+
+#: src/components/Alert/index.jsx:26
+msgid "Success: "
+msgstr ""
+
+#: src/components/CardLarge/index.jsx:34
+msgid "Purchase Media"
+msgstr ""
+
+#: src/components/ConfigureFileInput/index.jsx:24
+msgid "Drag and drop file here"
+msgstr ""
+
+#: src/components/ConfigureFileInput/index.jsx:42
+msgid "Drop"
+msgstr ""
+
+#: src/components/ConfigureFileInput/index.jsx:50
+msgid "Drag and drop files here"
+msgstr ""
+
+#: src/components/ConfigureFileInput/index.jsx:93
+msgid "Upload a file"
+msgstr ""
+
+#: src/components/ConfirmEnable/index.jsx:14
+msgid "Are you sure to continue ?"
+msgstr ""
+
+#: src/components/ConfirmEnable/index.jsx:26
+#: src/components/ConfirmReset/index.jsx:29
+msgid "Yes"
+msgstr ""
+
+#: src/components/ConfirmEnable/index.jsx:33
+#: src/components/ConfirmReset/index.jsx:36
+msgid "No"
+msgstr ""
+
+#: src/components/ConfirmReset/index.jsx:12
+msgid "Reset to defaults ?"
+msgstr ""
+
+#: src/components/ConfirmReset/index.jsx:14
+msgid "Are you sure do you want to reset the current settings to default ?"
+msgstr ""
+
+#: src/components/Header/index.jsx:48
+msgid "CHECK PREMIUM OPTIONS"
+msgstr ""
+
+#: src/components/LicenseFooter/index.jsx:12
+#: src/components/SettingsFooter/index.jsx:14
+msgid "Reset Defaults"
+msgstr ""
+
+#: src/components/LicenseFooter/index.jsx:9
+#: src/components/SettingsFooter/index.jsx:11
+msgid "Save Changes"
+msgstr ""
+
+#: src/components/LicenseHeader/index.jsx:10
+#: src/components/SettingsHeader/index.jsx:10
+msgid "Back"
+msgstr ""
+
+#: src/components/PremiumBanner/index.jsx:10
+msgid "Get access to premium tools and exclusive benefits."
+msgstr ""
+
+#: src/components/PremiumBanner/index.jsx:18
+msgid "Learn More"
+msgstr ""
+
+#: src/components/PremiumBanner/index.jsx:9
+msgid "Upgrade to Pro Today!"
+msgstr ""
+
+#: src/components/Welcome/index.jsx:11
+msgid "Welcome to Offload Media Dashboard"
+msgstr ""
+
+#: src/components/Welcome/index.jsx:23
+msgid "Support"
+msgstr ""
+
+#: src/components/Welcome/index.jsx:9
+msgid "Hey there,"
+msgstr ""
+
+#: src/pages/Configure/ConfigureServiceDetails.jsx:27
+msgid "Watch Demo"
+msgstr ""
+
+#: src/pages/Configure/ConfigureServiceDetails.jsx:39
+msgid "View Documentation"
+msgstr ""
+
+#: src/pages/Dashboard.js:105
+#: src/pages/PluginSettings.js:94
+msgid "Settings"
+msgstr ""
+
+#: src/pages/Dashboard.js:106
+msgid ""
+"Adjust your service settings to customize your storage read and write "
+"operations"
+msgstr ""
+
+#: src/pages/Dashboard.js:28
+msgid "Uploaded Media's"
+msgstr ""
+
+#: src/pages/Dashboard.js:59
+msgid "Documentation"
+msgstr ""
+
+#: src/pages/Dashboard.js:60
+msgid "You need any help with configuring the plugin, Visit our documentation page."
+msgstr ""
+
+#: src/pages/Dashboard.js:72
+msgid "Let's Get Started"
+msgstr ""
+
+#: src/pages/Dashboard.js:73
+msgid "Welcome to Offload media! To get started, configure your cloud storage."
+msgstr ""
+
+#: src/pages/Dashboard.js:85
+msgid "Configure"
+msgstr ""
+
+#: src/pages/Dashboard.js:86
+msgid "Change/Modify your cloud storage settings."
+msgstr ""
+
+#: src/pages/License.js:22
+msgid "License"
+msgstr ""
+
+#: src/pages/Page404.js:10
+msgid "404 - Page not found"
+msgstr ""
+
+#: src/pages/Page404.js:13
+msgid "Sorry!! The page you are looking for not found on this settings page"
+msgstr ""
+
+#: src/utils/fields.jsx:153
+msgid "Google Cloud base path"
+msgstr ""
+
+#: src/utils/fields.jsx:157
+msgid "This is the base directory path of the media storage in Google Cloud Storage"
+msgstr ""
+
+#: src/utils/fields.jsx:17
+msgid "S3 base path"
+msgstr ""
+
+#: src/utils/fields.jsx:18
+msgid "This is the base directory path of the media storage in Amazon S3"
+msgstr ""
+
+#: src/utils/fields.jsx:276
+msgid "Enable Legacy ACL"
+msgstr ""
+
+#: src/utils/fields.jsx:280
+msgid "Enable legacy ACL for Google Cloud Storage"
+msgstr ""
+
+#: src/utils/fields.jsx:292
+msgid "Copy files to Space"
+msgstr ""
+
+#: src/utils/fields.jsx:293
+msgid "Upload to space, when ever a file is uploaded to Media Library"
+msgstr ""
+
+#: src/utils/fields.jsx:301
+msgid "Digital Ocean base path"
+msgstr ""
+
+#: src/utils/fields.jsx:305
+msgid "This is the base directory path of the media storage in Digital Ocean Spaces"
+msgstr ""
+
+#: src/utils/fields.jsx:331
+msgid "Object versioning"
+msgstr ""
+
+#: src/utils/fields.jsx:332
+msgid "Append a timestamp to the bucket path."
+msgstr ""
+
+#: src/utils/fields.jsx:428
+msgid "Copy files to bucket"
+msgstr ""
+
+#: src/utils/fields.jsx:429
+msgid "Upload to bucket, when ever a file is uploaded to Media Library"
+msgstr ""
+
+#: src/utils/fields.jsx:437
+msgid "Cloudeflare R2 base path"
+msgstr ""
+
+#: src/utils/fields.jsx:441
+msgid ""
+"This is the base directory path of the media storage in Cloudeflare R2 "
+"Bucket"
+msgstr ""
+
+#: src/utils/fields.jsx:448
+msgid "Enter base path"
+msgstr ""
+
+#: src/utils/fields.jsx:455
+msgid "Year/Month Structure"
+msgstr ""
+
+#: src/utils/fields.jsx:459
+msgid ""
+"This will enable year/month directories at the end of your base path. "
+"Otherwise it will be uploaded in to the base path directly."
+msgstr ""
+
+#: src/utils/fields.jsx:467
+msgid "Enable CDN / Custom End Point"
+msgstr ""
+
+#: src/utils/fields.jsx:468
+msgid "Enable a CDN / Custom End Point for your bucket"
+msgstr ""
+
+#: src/utils/fields.jsx:476
+msgid "CDN / Custom End Point URL"
+msgstr ""
+
+#: src/utils/fields.jsx:477
+msgid ""
+"Configure CDN / Custom End Point URL to point the bucket. Configure a "
+"subdomain to point at your CDN to ensure SEO for site."
+msgstr ""
+
+#: src/utils/fields.jsx:486
+msgid "Enter URL"
+msgstr ""
+
+#: src/utils/fields.jsx:490
+msgid "Enable Pre-signed URL"
+msgstr ""
+
+#: src/utils/fields.jsx:494
+msgid "Enable Pre-signed url for files"
+msgstr ""
+
+#: src/utils/fields.jsx:502
+msgid "Pre-signed expires"
+msgstr ""
+
+#: src/utils/fields.jsx:503
+msgid "Pre-signed url expiry time in minutes"
+msgstr ""
+
+#: src/utils/fields.jsx:511
+msgid "Enter duration in minutes"
+msgstr ""
+
+#: src/utils/fields.jsx:523
+msgid "Remove files from server"
+msgstr ""
+
+#: src/utils/fields.jsx:527
+msgid "Use this to remove file from server, Once it is uploaded to bucket"
+msgstr ""
+
+#: src/utils/fields.jsx:533
+msgid ""
+"<p>This setting will remove the files from the server once it is uploaded "
+"to the cloud, And it can lead to issues if you deactivate our plugin, So be "
+"careful before enabling this.</p><p>There is no option to copy these files "
+"back to the server in this plugin's free version. Though you can manually "
+"download it from the cloud and upload using FTP.</p>"
+msgstr ""
+
+#: src/utils/fields.jsx:542
+msgid "Rewrite media URL's"
+msgstr ""
+
+#: src/utils/fields.jsx:543
+msgid ""
+"For media library files that have been copied to the bucket, rewrite the "
+"URLs so that they are served from the bucket or CDN instead of your server."
+msgstr ""
+
+#: src/utils/loader.js:11
+msgid "Offload Media - Cloud Storage"
+msgstr ""
+
+#: src/utils/loader.js:13
+msgid "Loading please wait..."
+msgstr ""
+
+#: src/utils/variables.jsx:1006
+msgid "Europe (Frankfurt)"
+msgstr ""
+
+#: src/utils/variables.jsx:101
+msgid ""
+"Enable option only if you enabled the Transfer Acceleration feature in S3 "
+"Bucket. <a "
+"href=\"https://docs.aws.amazon.com/AmazonS3/latest/userguide/transfer-"
+"acceleration.html\" target=\"_blank\">Learn more</a>"
+msgstr ""
+
+#: src/utils/variables.jsx:1013
+msgid "Europe (London)"
+msgstr ""
+
+#: src/utils/variables.jsx:1020
+msgid "Europe (Zürich)"
+msgstr ""
+
+#: src/utils/variables.jsx:1027
+msgid "North America (South Carolina)"
+msgstr ""
+
+#: src/utils/variables.jsx:1034
+msgid "North America (Iowa)"
+msgstr ""
+
+#: src/utils/variables.jsx:1041
+msgid "North America (Oregon)"
+msgstr ""
+
+#: src/utils/variables.jsx:1048
+msgid "North America (Los Angeles)"
+msgstr ""
+
+#: src/utils/variables.jsx:1055
+msgid "South America (São Paulo)"
+msgstr ""
+
+#: src/utils/variables.jsx:1064
+msgid "Amsterdam"
+msgstr ""
+
+#: src/utils/variables.jsx:1071
+msgid "Bangalore"
+msgstr ""
+
+#: src/utils/variables.jsx:1078
+msgid "Frankfurt"
+msgstr ""
+
+#: src/utils/variables.jsx:1085
+msgid "London"
+msgstr ""
+
+#: src/utils/variables.jsx:1092
+msgid "New York"
+msgstr ""
+
+#: src/utils/variables.jsx:1099
+msgid "San Francisco 2"
+msgstr ""
+
+#: src/utils/variables.jsx:1106
+msgid "San Francisco 3"
+msgstr ""
+
+#: src/utils/variables.jsx:1113
+msgid "Singapore"
+msgstr ""
+
+#: src/utils/variables.jsx:112
+msgid "Google Cloud"
+msgstr ""
+
+#: src/utils/variables.jsx:1120
+msgid "Sydney"
+msgstr ""
+
+#: src/utils/variables.jsx:1127
+msgid "Toronto"
+msgstr ""
+
+#: src/utils/variables.jsx:1136
+msgid "Western North America"
+msgstr ""
+
+#: src/utils/variables.jsx:114
+msgid ""
+"Google Cloud Storage is a RESTful online file storage web service for "
+"storing and accessing data on Google Cloud Platform infrastructure."
+msgstr ""
+
+#: src/utils/variables.jsx:1143
+msgid "Eastern North America"
+msgstr ""
+
+#: src/utils/variables.jsx:1150
+msgid "Western Europe"
+msgstr ""
+
+#: src/utils/variables.jsx:1157
+msgid "Eastern Europe"
+msgstr ""
+
+#: src/utils/variables.jsx:1164
+msgid "Asia-Pacific"
+msgstr ""
+
+#: src/utils/variables.jsx:1171
+msgid "Oceania"
+msgstr ""
+
+#: src/utils/variables.jsx:118
+msgid ""
+"Google Cloud Storage offers secure, durable, and scalable object storage "
+"for any amount of data. It allows worldwide storage and retrieval of data "
+"at any time, supporting various scenarios such as serving website content, "
+"storing data for archival and disaster recovery, or distributing large data "
+"objects to users via direct download. For WordPress websites, utilizing "
+"Google Cloud Storage can lead to faster content delivery, improved "
+"reliability, and efficient handling of large amounts of data. Its "
+"integration with other Google Cloud services provides a comprehensive "
+"solution for developers seeking reliable and efficient cloud storage."
+msgstr ""
+
+#: src/utils/variables.jsx:121
+msgid ""
+"Provide key file and bucketname to configure offload media. Clicking on "
+"Next will verify your settings."
+msgstr ""
+
+#: src/utils/variables.jsx:131
+msgid "Define key file path in wp-config.php"
+msgstr ""
+
+#: src/utils/variables.jsx:135
+msgid ""
+"Copy the following snippet to near the top of your wp-config.php and "
+"replace \"/path/to/key/file.json\""
+msgstr ""
+
+#: src/utils/variables.jsx:157
+msgid ""
+"Upload the JSON key file you downloaded from Google Cloud Platform. This "
+"file contains the credentials required to access your Google Cloud Storage "
+"bucket."
+msgstr ""
+
+#: src/utils/variables.jsx:16
+msgid "Amazon S3"
+msgstr ""
+
+#: src/utils/variables.jsx:163
+msgid "Upload JSON key file"
+msgstr ""
+
+#: src/utils/variables.jsx:170
+msgid "Upload file here"
+msgstr ""
+
+#: src/utils/variables.jsx:18
+msgid ""
+"Amazon S3 or Amazon Simple Storage Service is a service offered by Amazon "
+"Web Services (AWS) that provides object storage through a web service "
+"interface."
+msgstr ""
+
+#: src/utils/variables.jsx:186
+msgid "Digital Ocean"
+msgstr ""
+
+#: src/utils/variables.jsx:188
+msgid ""
+"Digital Ocean Spaces is an S3-compatible object storage service that lets "
+"you store and serve large amounts of data."
+msgstr ""
+
+#: src/utils/variables.jsx:192
+msgid ""
+"DigitalOcean Spaces is an S3-compatible object storage service designed for "
+"simplicity and scalability. It allows users to store and serve large "
+"amounts of data, with data transfer automatically secured with HTTPS and "
+"storage capacity that scales seamlessly. The built-in Content Delivery "
+"Network (CDN) minimizes page load times, improves performance, and reduces "
+"bandwidth and infrastructure costs. For WordPress websites, integrating "
+"DigitalOcean Spaces can lead to faster load times due to the CDN, "
+"simplified data management, and predictable costs. The user-friendly "
+"interface and compatibility with existing S3 tools make it a convenient "
+"option for enhancing website performance."
+msgstr ""
+
+#: src/utils/variables.jsx:195
+msgid ""
+"Provide your Digial Ocean Spaces credentials and the name of your cloud "
+"space to configure offload media. Clicking on Next will verify your "
+"settings."
+msgstr ""
+
+#: src/utils/variables.jsx:22
+msgid ""
+"Amazon S3 is a highly scalable and durable object storage service provided "
+"by Amazon Web Services (AWS). It allows users to store and retrieve any "
+"amount of data at any time, offering 99.999999999% durability by "
+"automatically copying data across multiple locations within an AWS region "
+"to prevent data loss and downtime during disasters. S3 is commonly used for "
+"backup and archiving, disaster recovery, web hosting, big data analytics, "
+"data lakes, IoT applications, and storing and serving static assets like "
+"images and videos. Its pay-as-you-go pricing model is based on storage "
+"usage, requests, data transfer, and additional features like data transfer "
+"acceleration and cross-region replication. For WordPress websites, "
+"offloading media files to Amazon S3 can reduce server load, improve load "
+"times, and enhance overall performance, especially when integrated with a "
+"content delivery network (CDN) like Amazon CloudFront."
+msgstr ""
+
+#: src/utils/variables.jsx:26
+msgid ""
+"Provide your Amazon credentials and the name of your S3 bucket to configure "
+"offload media. Clicking on Next will verify your settings."
+msgstr ""
+
+#: src/utils/variables.jsx:266
+msgid "Cloudflare R2"
+msgstr ""
+
+#: src/utils/variables.jsx:268
+msgid ""
+"R2 is a modern, efficient, S3-compatible cloud object service offered by "
+"Cloudflare."
+msgstr ""
+
+#: src/utils/variables.jsx:272
+msgid ""
+"Cloudflare R2 is a distributed object storage service that eliminates "
+"egress fees, providing cost-effective data storage and retrieval. It "
+"integrates seamlessly with Cloudflare's global network, ensuring "
+"low-latency access and enhanced performance. R2's S3-compatible API offers "
+"added flexibility, allowing access to a wide range of S3 tools, libraries, "
+"and extensions. For WordPress websites, Cloudflare R2 offers the advantage "
+"of reducing bandwidth costs while maintaining quick data access for users "
+"worldwide. Its integration with Cloudflare Workers enables developers to "
+"build scalable applications with serverless compute, enhancing the "
+"functionality and performance of their websites."
+msgstr ""
+
+#: src/utils/variables.jsx:275
+msgid ""
+"Provide your Cloudflare R2 credentials and the name of your cloud space to "
+"configure offload media. Clicking on Next will verify your settings."
+msgstr ""
+
+#: src/utils/variables.jsx:285
+msgid "Define access key and secret key in wp-config.php"
+msgstr ""
+
+#: src/utils/variables.jsx:289
+msgid ""
+"Add the following lines to your wp-config.php file to define your AWS "
+"access key and secret key."
+msgstr ""
+
+#: src/utils/variables.jsx:309
+msgid "I understand the risk, but i'd like to store access keys in database"
+msgstr ""
+
+#: src/utils/variables.jsx:313
+msgid ""
+"Storing your access keys in the database is less secure than the other "
+"options, but if you're ok with that, go ahead and enter your keys in the "
+"form below."
+msgstr ""
+
+#: src/utils/variables.jsx:319
+msgid "Account ID"
+msgstr ""
+
+#: src/utils/variables.jsx:323
+msgid "Enter accoutn ID"
+msgstr ""
+
+#: src/utils/variables.jsx:331
+msgid "Access Key"
+msgstr ""
+
+#: src/utils/variables.jsx:335
+msgid "Enter access key"
+msgstr ""
+
+#: src/utils/variables.jsx:343
+msgid "Secret Key"
+msgstr ""
+
+#: src/utils/variables.jsx:347
+msgid "Enter secret key"
+msgstr ""
+
+#: src/utils/variables.jsx:364
+msgid "I already have an S3 bucket"
+msgstr ""
+
+#: src/utils/variables.jsx:416
+msgid "Create a new S3 bucket"
+msgstr ""
+
+#: src/utils/variables.jsx:451
+msgid "I already have an google cloud bucket"
+msgstr ""
+
+#: src/utils/variables.jsx:491
+msgid "Create a new google cloud bucket"
+msgstr ""
+
+#: src/utils/variables.jsx:526
+msgid "I already have an Digital Ocean space"
+msgstr ""
+
+#: src/utils/variables.jsx:533
+msgid "Enter Space Name"
+msgstr ""
+
+#: src/utils/variables.jsx:536
+msgid "Space Name"
+msgstr ""
+
+#: src/utils/variables.jsx:540
+msgid "Enter space name"
+msgstr ""
+
+#: src/utils/variables.jsx:560
+msgid "Select Space"
+msgstr ""
+
+#: src/utils/variables.jsx:578
+msgid "Create a new Digital Ocean space"
+msgstr ""
+
+#: src/utils/variables.jsx:613
+msgid "I already have an R2 bucket"
+msgstr ""
+
+#: src/utils/variables.jsx:641
+msgid "Select Bucket"
+msgstr ""
+
+#: src/utils/variables.jsx:653
+msgid "Create a new Cloudflare R2 bucket"
+msgstr ""
+
+#: src/utils/variables.jsx:660
+msgid "Enter Bucket Name"
+msgstr ""
+
+#: src/utils/variables.jsx:663
+msgid "Bucket Name"
+msgstr ""
+
+#: src/utils/variables.jsx:667
+msgid "Enter bucket name"
+msgstr ""
+
+#: src/utils/variables.jsx:675
+msgid "Region"
+msgstr ""
+
+#: src/utils/variables.jsx:681
+msgid "Enable Public Access"
+msgstr ""
+
+#: src/utils/variables.jsx:687
+msgid "API Token"
+msgstr ""
+
+#: src/utils/variables.jsx:692
+msgid "Enter API Token"
+msgstr ""
+
+#: src/utils/variables.jsx:709
+msgid "US East (Ohio)"
+msgstr ""
+
+#: src/utils/variables.jsx:716
+msgid "US East (N. Virginia)"
+msgstr ""
+
+#: src/utils/variables.jsx:723
+msgid "US West (N. California)"
+msgstr ""
+
+#: src/utils/variables.jsx:730
+msgid "US West (Oregon)"
+msgstr ""
+
+#: src/utils/variables.jsx:737
+msgid "Africa (Cape Town)"
+msgstr ""
+
+#: src/utils/variables.jsx:744
+msgid "Asia Pacific (Hong Kong)***"
+msgstr ""
+
+#: src/utils/variables.jsx:752
+msgid "Asia Pacific (Jakarta)"
+msgstr ""
+
+#: src/utils/variables.jsx:759
+msgid "Asia Pacific (Mumbai)"
+msgstr ""
+
+#: src/utils/variables.jsx:766
+msgid "Asia Pacific (Osaka)"
+msgstr ""
+
+#: src/utils/variables.jsx:773
+msgid "Asia Pacific (Seoul)"
+msgstr ""
+
+#: src/utils/variables.jsx:780
+msgid "Asia Pacific (Singapore)"
+msgstr ""
+
+#: src/utils/variables.jsx:787
+msgid "Asia Pacific (Sydney)"
+msgstr ""
+
+#: src/utils/variables.jsx:794
+msgid "Asia Pacific (Tokyo)"
+msgstr ""
+
+#: src/utils/variables.jsx:801
+msgid "Canada (Central)"
+msgstr ""
+
+#: src/utils/variables.jsx:808
+msgid "China (Beijing)"
+msgstr ""
+
+#: src/utils/variables.jsx:815
+msgid "China (Ningxia)"
+msgstr ""
+
+#: src/utils/variables.jsx:829
+msgid "Europe (Ireland)"
+msgstr ""
+
+#: src/utils/variables.jsx:843
+msgid "Europe (Milan)"
+msgstr ""
+
+#: src/utils/variables.jsx:850
+msgid "Europe (Paris)"
+msgstr ""
+
+#: src/utils/variables.jsx:857
+msgid "Europe (Stockholm)"
+msgstr ""
+
+#: src/utils/variables.jsx:871
+msgid "Middle East (Bahrain)"
+msgstr ""
+
+#: src/utils/variables.jsx:878
+msgid "EAWS GovCloud (US-East)"
+msgstr ""
+
+#: src/utils/variables.jsx:885
+msgid "AWS GovCloud (US-West)"
+msgstr ""
+
+#: src/utils/variables.jsx:894
+msgid "Africa (Johannesburg)"
+msgstr ""
+
+#: src/utils/variables.jsx:901
+msgid "Asia (Hong Kong)"
+msgstr ""
+
+#: src/utils/variables.jsx:908
+msgid "Asia (Osaka)"
+msgstr ""
+
+#: src/utils/variables.jsx:915
+msgid "Asia (Seoul)"
+msgstr ""
+
+#: src/utils/variables.jsx:922
+msgid "Asia (Singapore)"
+msgstr ""
+
+#: src/utils/variables.jsx:929
+msgid "Asia (Taiwan)"
+msgstr ""
+
+#: src/utils/variables.jsx:936
+msgid "Asia (Tokyo)"
+msgstr ""
+
+#: src/utils/variables.jsx:943
+msgid "Australia (Melbourne)"
+msgstr ""
+
+#: src/utils/variables.jsx:950
+msgid "Australia (Sydney)"
+msgstr ""
+
+#: src/utils/variables.jsx:957
+msgid "Dual-Region (Belgium/London)"
+msgstr ""
+
+#: src/utils/variables.jsx:964
+msgid "Dual-Region (Finland/Netherlands)"
+msgstr ""
+
+#: src/utils/variables.jsx:97
+msgid "Use Transfer Acceleration"
+msgstr ""
+
+#: src/utils/variables.jsx:971
+msgid "Dual-Region (Frankfurt/Zürich)"
+msgstr ""
+
+#: src/utils/variables.jsx:978
+msgid "Dual-Region (Iowa/South Carolina)"
+msgstr ""
+
+#: src/utils/variables.jsx:985
+msgid "Europe (Belgium)"
+msgstr ""
+
+#: src/utils/variables.jsx:992
+msgid "Europe (Berlin)"
+msgstr ""
+
+#: src/utils/variables.jsx:999
+msgid "Europe (Finland)"
+msgstr ""
