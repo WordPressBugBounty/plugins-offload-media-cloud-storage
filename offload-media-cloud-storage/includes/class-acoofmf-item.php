@@ -857,23 +857,27 @@ class ACOOFMF_ITEM
      */
     public function may_generate_cdn_url($url, $path)
     {
+        $new_url = $url;
+
         if (
-            isset($this->settings['enable_cdn']) && $this->settings['enable_cdn'] &&
-            isset($this->settings['cdn_url']) && !empty($this->settings['cdn_url']) &&
-            isset($url) && !empty($url) &&
-            isset($path) && !empty($path)
+            !empty($this->settings['enable_cdn']) &&
+            !empty($this->settings['cdn_url']) &&
+            !empty($url)
         ) {
-
-            $urlArray =  explode($path, $url );
-            if(isset($urlArray) && !empty($urlArray) && isset($urlArray[0])) {
-                $new_url = str_replace(trailingslashit($urlArray[0]), trailingslashit($this->settings['cdn_url']), $url);
-                $new_url = apply_filters('acoofm_cdn_url_setting', $new_url, $url, $this->settings['cdn_url']);
-                $new_url = preg_replace('/([^:])(\/{2,})/', '$1/', $new_url); // to remove double slash trapped during any operations
-                return $new_url;
+            $parts = parse_url($url);
+            if ($parts && isset($parts['scheme'], $parts['host'])) {
+                $base_url = $parts['scheme'] . '://' . $parts['host'];
+                $new_url = str_replace(trailingslashit($base_url), trailingslashit($this->settings['cdn_url']), $url);
             }
-
         }
-        return $url;
+
+        // remove duplicate slashes safely
+        $new_url = preg_replace('#(?<!:)//+#', '/', $new_url);
+
+        $cdn_url = isset($this->settings['cdn_url']) ? $this->settings['cdn_url'] : '';
+        $new_url = apply_filters('acoofm_cdn_url', $new_url, $url, $cdn_url);
+
+        return $new_url;
     }
 
     /**

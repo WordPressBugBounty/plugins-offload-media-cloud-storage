@@ -366,7 +366,7 @@ class ACOOFMF_GOOGLE
                     fclose($verify_file);
 
                     $options = [
-                        'name' => $key,
+                        'name' => $fileName,
                     ];
                     $settings = acoofm_get_settings();
                     if (isset($settings['enable_gcs_acl']) && $settings['enable_gcs_acl']) {
