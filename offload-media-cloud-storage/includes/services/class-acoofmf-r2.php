@@ -116,6 +116,15 @@ class ACOOFMF_R2
      */
     public $hook_suffix = array();
 
+    /**
+     * The public base URL.
+     *
+     * @var     string
+     * @access  public
+     * @since   1.0.0
+     */
+    public $public_base_url = '';
+
 
     /**
      * Constructor function.
@@ -170,6 +179,8 @@ class ACOOFMF_R2
 
             $this->acoofm_r2_client = new Aws\S3\S3Client($options);
         }
+        $this->public_base_url = "https://{$account_id}.r2.cloudflarestorage.com";
+
     }
 
     /**
@@ -401,89 +412,190 @@ class ACOOFMF_R2
      */
     public function verify($access_key, $secret_key, $account_id, $bucket_name, $transfer_accilaration = false)
     {
-        if (
-            isset($account_id) && !empty($account_id) &&
-            isset($access_key) && !empty($access_key) &&
-            isset($secret_key) && !empty($secret_key) &&
-            isset($bucket_name) && !empty($bucket_name)
-        ) {
-            try {
-                $credentials = new Aws\Credentials\Credentials($access_key, $secret_key);
-                $options = [
-                    'region' => 'auto',
-                    'endpoint' => "https://$account_id.r2.cloudflarestorage.com",
-                    'version' => 'latest',
-                    'credentials' => $credentials
-                ];
-                $r2Client = new Aws\S3\S3Client($options);
+        if (empty($account_id) || empty($access_key) || empty($secret_key) || empty($bucket_name)) {
+            return [
+                'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'),
+                'code'    => 405,
+                'success' => false
+            ];
+        }
 
-                //Listing all cloudeflare r2 Bucket
-                $buckets = $r2Client->listBuckets();
-                $bucket_found = false;
-                $region_correct = false;
-                if ($buckets) {
-                    foreach ($buckets['Buckets'] as $bucket) {
-                        if ($bucket['Name']==$bucket_name) {
-                            $bucket_found = true;
-                        }
+        try {
+            /** --------------------------------------------------------
+             * STEP 1: Initialize Cloudflare R2 Client
+             * -------------------------------------------------------- */
+            $credentials = new Aws\Credentials\Credentials($access_key, $secret_key);
+
+            $options = [
+                'region'      => 'auto',
+                'version'     => 'latest',
+                'endpoint'    => "https://{$account_id}.r2.cloudflarestorage.com",
+                'credentials' => $credentials
+            ];
+
+            $r2Client = new Aws\S3\S3Client($options);
+
+            /** --------------------------------------------------------
+             * STEP 2: Check if bucket exists
+             * -------------------------------------------------------- */
+            $buckets = $r2Client->listBuckets();
+            $bucket_found = false;
+
+            if (!empty($buckets['Buckets'])) {
+                foreach ($buckets['Buckets'] as $bucket) {
+                    if ($bucket['Name'] === $bucket_name) {
+                        $bucket_found = true;
+                        break;
                     }
-                } else {
-                    return array('message' => __('No Buckets found', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
                 }
-                if ($bucket_found) {
-                    $fileName = "acoofm_verify.txt";
-                    $verify_file = fopen('./'.$fileName, "w");
-                    $txt = "We are verifying input/output operations in Clodeflare R2\n";
-                    fwrite($verify_file, $txt);
-                    fclose($verify_file);
-
-                    $upload = $r2Client->putObject([
-                        'Bucket' => $bucket_name,
-                        'Key'    => $fileName,
-                        'Body'   => fopen('./'.$fileName, "r"),
-                        'ACL'    => 'public-read', // make file 'public'
-                    ]);
-                    
-                    @unlink($fileName);
-                    if ($upload->get('ObjectURL')) {
-                        try {
-                            $getObject = $r2Client->GetObject([
-                                'Bucket' => $bucket_name,
-                                'Key'    => $fileName,
-                                'SaveAs' => 'acoofm-local-verify.txt'
-                            ]);
-
-                            if (file_exists('acoofm-local-verify.txt')) {
-                                @unlink('acoofm-local-verify.txt');
-                                $r2Client->deleteObject([
-                                    'Bucket' => $bucket_name,
-                                    'Key'    => $fileName,
-                                ]);
-                
-                                if (!$r2Client->doesObjectExist($bucket_name, $fileName)) {
-                                    return array('message' => __('Configuration for Cloudflare R2 has verified successfully', 'offload-media-cloud-storage'), 'code' => 200, 'success' => true);
-                                } else {
-                                    return array('message' => __('User has permission issues on deleting the object from space, Please check ACL permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                                }
-                            } else {
-                                return array('message' => __('User has permission issues on getting the object from space, Please check ACL permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                            }
-                        } catch (Aws\S3\Exception\S3Exception $ex) {
-                            return array('message' => $ex->getAwsErrorMessage(), 'code' => $ex->getAwsErrorCode(), 'success' => false);
-                        }
-                    } else {
-                        return array('message' => __('User has permission issues on putting object in to space, Please check ACL permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                    }
-                } else {
-                    return array('message' => __('Space Name / Region is incorrect', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                }
-            } catch (Aws\S3\Exception\S3Exception $ex) {
-                return array('message' =>  $ex->getAwsErrorMessage() ?: __('Please check the authorization details', 'offload-media-cloud-storage'), 'code' => $ex->getStatusCode() ?? 405 , 'success' => false);
             }
-        } else {
-            return array( 'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'), 'code' =>  405, 'success' => false);
+
+            if (!$bucket_found) {
+                return [
+                    'message' => __('Space Name / Bucket is incorrect', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            /** --------------------------------------------------------
+             * STEP 3: Create test file in WP uploads folder
+             * -------------------------------------------------------- */
+            $upload_dir = wp_upload_dir();
+            $fileName   = "acoofm_verify.txt";
+            $filePath   = trailingslashit($upload_dir['basedir']) . $fileName;
+
+            $verify_file = fopen($filePath, "w");
+
+            if (!$verify_file) {
+                return [
+                    'message' => __('Unable to create verification file. Check upload folder permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 500,
+                    'success' => false
+                ];
+            }
+
+            fwrite($verify_file, "We are verifying input/output operations in Cloudflare R2\n");
+            fclose($verify_file);
+
+            /** --------------------------------------------------------
+             * STEP 4: Upload test file to R2
+             * -------------------------------------------------------- */
+            $upload = null;
+
+            try {
+                // R2 DOES NOT SUPPORT ACL → removing 'ACL'
+                $upload = $r2Client->putObject([
+                    'Bucket' => $bucket_name,
+                    'Key'    => $fileName,
+                    'Body'   => fopen($filePath, "r"),
+                ]);
+            } catch (Exception $e) {
+                @unlink($filePath);
+
+                return [
+                    'message' => __('Unable to upload object to Cloudflare R2. Check permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            if (empty($upload)) {
+                @unlink($filePath);
+
+                return [
+                    'message' => __('Upload failed. Please check R2 policies & permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            /** --------------------------------------------------------
+             * STEP 5: Try downloading the uploaded file
+             * -------------------------------------------------------- */
+            $local_download_path = trailingslashit($upload_dir['basedir']) . "acoofm-local-verify.txt";
+
+            try {
+                $r2Client->getObject([
+                    'Bucket' => $bucket_name,
+                    'Key'    => $fileName,
+                    'SaveAs' => $local_download_path
+                ]);
+            } catch (Exception $e) {
+                @unlink($filePath);
+
+                return [
+                    'message' => __('Unable to download test object. Read permission denied.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            if (!file_exists($local_download_path)) {
+                @unlink($filePath);
+
+                return [
+                    'message' => __('Downloaded file missing. Read permission problem in R2.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            @unlink($local_download_path);
+
+            /** --------------------------------------------------------
+             * STEP 6: Delete object from R2
+             * -------------------------------------------------------- */
+            try {
+                $r2Client->deleteObject([
+                    'Bucket' => $bucket_name,
+                    'Key'    => $fileName
+                ]);
+            } catch (Exception $e) {
+                @unlink($filePath);
+
+                return [
+                    'message' => __('Unable to delete object from Cloudflare R2. Check delete permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            if ($r2Client->doesObjectExist($bucket_name, $fileName)) {
+                @unlink($filePath);
+
+                return [
+                    'message' => __('Delete failed. Object still exists in R2. Check permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            /** --------------------------------------------------------
+             * Cleanup local file
+             * -------------------------------------------------------- */
+            if (file_exists($filePath)) {
+                @unlink($filePath);
+            }
+
+            /** --------------------------------------------------------
+             * SUCCESS 🎉
+             * -------------------------------------------------------- */
+            return [
+                'message' => __('Configuration for Cloudflare R2 verified successfully!', 'offload-media-cloud-storage'),
+                'code'    => 200,
+                'success' => true
+            ];
+
+        } catch (Aws\S3\Exception\S3Exception $ex) {
+            return [
+                'message' => $ex->getAwsErrorMessage() ?: __('Please check the authorization details', 'offload-media-cloud-storage'),
+                'code'    => $ex->getStatusCode() ?? 405,
+                'success' => false
+            ];
         }
     }
+
 
     /**
      * Connect Function To Identify the congfigurations are correct
@@ -615,9 +727,11 @@ class ACOOFMF_R2
                             }
                         } while (!isset($uploaded));
                         if (isset($uploaded['ObjectURL']) && !empty($uploaded['ObjectURL'])) {
-                            $url = (!preg_match("~^(?:f|ht)tps?://~i", $uploaded['ObjectURL'])) 
-                                        ? "https://" . $uploaded['ObjectURL']
-                                        : $uploaded['ObjectURL'];
+                            // Build your clean URL
+                            $baseUrl = rtrim($this->public_base_url, '/');
+                            $key     = ltrim($upload_path, '/');
+
+                            $url = $baseUrl . '/' . $key;
 
                             $result = array(
                                 'success' => true,

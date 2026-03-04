@@ -393,93 +393,186 @@ class ACOOFMF_S3
      */
     public function verify($access_key, $secret_key, $region, $bucket_name, $transfer_accilaration = false)
     {
-        if (
-            isset($region) && !empty($region) &&
-            isset($access_key) && !empty($access_key) &&
-            isset($secret_key) && !empty($secret_key) &&
-            isset($bucket_name) && !empty($bucket_name)
-        ) {
-            try {
-                $credentials = [
-                    'version'     => '2006-03-01',
-                    'region'      => $region,
-                    'use_accelerate_endpoint' => $transfer_accilaration,
-                    'use_aws_shared_config_files' => false,
-                    'credentials' => [
-                        'key'    => $access_key,
-                        'secret' => $secret_key,
-                    ],
-                ];
-                $credentials = apply_filters('acoofm_s3_client_credentials', $credentials, $this->config);
-                $s3Client = new S3Client($credentials);
+        if (empty($region) || empty($access_key) || empty($secret_key) || empty($bucket_name)) {
+            return [
+                'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'),
+                'code'    => 405,
+                'success' => false
+            ];
+        }
 
-                //Listing all S3 Bucket
-                $buckets = $s3Client->listBuckets();
-                $bucket_found = false;
-                $region_correct = false;
-                if ($buckets) {
-                    foreach ($buckets['Buckets'] as $bucket) {
-                        if ($bucket['Name']==$bucket_name) {
-                            $bucket_found = true;
-                        }
+        try {
+            /** --------------------------------------------------------
+             * STEP 1: Initialize AWS S3 Client
+             * -------------------------------------------------------- */
+            $credentials = [
+                'version'                     => '2006-03-01',
+                'region'                      => $region,
+                'use_accelerate_endpoint'     => $transfer_accilaration,
+                'use_aws_shared_config_files' => false,
+                'credentials'                 => [
+                    'key'    => $access_key,
+                    'secret' => $secret_key,
+                ]
+            ];
+
+            // Allow other plugins to modify config
+            $credentials = apply_filters('acoofm_s3_client_credentials', $credentials, $this->config);
+
+            $s3Client = new S3Client($credentials);
+
+            /** --------------------------------------------------------
+             * STEP 2: Check if bucket exists
+             * -------------------------------------------------------- */
+            $buckets = $s3Client->listBuckets();
+            $bucket_found = false;
+
+            if (!empty($buckets['Buckets'])) {
+                foreach ($buckets['Buckets'] as $bucket) {
+                    if ($bucket['Name'] === $bucket_name) {
+                        $bucket_found = true;
+                        break;
                     }
-                } else {
-                    return array('message' => __('No Buckets found', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
                 }
-                if ($bucket_found) {
-                    $fileName = "acoofm_verify.txt";
-                    $verify_file = fopen('./'.$fileName, "w");
-                    $txt = "We are verifying input/output operations in s3\n";
-                    fwrite($verify_file, $txt);
-                    fclose($verify_file);
-
-                    $upload = $s3Client->putObject([
-                        'Bucket' => $bucket_name,
-                        'Key'    => $fileName,
-                        'Body'   => fopen('./'.$fileName, "r"),
-                        'ACL'    => 'public-read', // make file 'public'
-                    ]);
-                    
-                    @unlink($fileName);
-                    if ($upload->get('ObjectURL')) {
-                        try {
-                            $getObject = $s3Client->GetObject([
-                                'Bucket' => $bucket_name,
-                                'Key'    => $fileName,
-                                'SaveAs' => 'acoofm-local-verify.txt'
-                            ]);
-
-                            if (file_exists('acoofm-local-verify.txt')) {
-                                @unlink('acoofm-local-verify.txt');
-                                $s3Client->deleteObject([
-                                    'Bucket' => $bucket_name,
-                                    'Key'    => $fileName,
-                                ]);
-                
-                                if (!$s3Client->doesObjectExist($bucket_name, $fileName)) {
-                                    return array('message' => __('Configuration for AWS/S3 has verified successfully', 'offload-media-cloud-storage'), 'code' => 200, 'success' => true);
-                                } else {
-                                    return array('message' => __('Bucket has permission issues on deleting the object from bucket, Please check ACL permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                                }
-                            } else {
-                                return array('message' => __('Bucket has permission issues on getting the object from bucket, Please check ACL permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                            }
-                        } catch (Aws\S3\Exception\S3Exception $ex) {
-                            return array('message' => $ex->getAwsErrorMessage(), 'code' => $ex->getAwsErrorCode(), 'success' => false);
-                        }
-                    } else {
-                        return array('message' => __('Bucket has permission issues on putting object in to bucket, Please check ACL permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                    }
-                } else {
-                    return array('message' => __('Bucket Name is incorrect', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                }
-            } catch (Aws\S3\Exception\S3Exception $ex) {
-                return array('message' => $ex->getAwsErrorMessage() ?? __('Please check the authorization details', 'offload-media-cloud-storage'), 'code' => $ex->getStatusCode() ?? 405, 'success' => false);
             }
-        } else {
-            return array( 'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'), 'code' =>  405, 'success' => false);
+
+            if (!$bucket_found) {
+                return [
+                    'message' => __('Bucket Name is incorrect or not accessible', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            /** --------------------------------------------------------
+             * STEP 3: Create local test file in uploads directory
+             * -------------------------------------------------------- */
+            $upload_dir = wp_upload_dir();
+            $fileName   = "acoofm_verify.txt";
+            $filePath   = trailingslashit($upload_dir['basedir']) . $fileName;
+
+            $verify_file = fopen($filePath, "w");
+            if (!$verify_file) {
+                return [
+                    'message' => __('Unable to create verification file. Check uploads directory permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 500,
+                    'success' => false
+                ];
+            }
+
+            fwrite($verify_file, "We are verifying input/output operations in AWS S3\n");
+            fclose($verify_file);
+
+            /** --------------------------------------------------------
+             * STEP 4: Upload test file
+             * -------------------------------------------------------- */
+            try {
+                $upload = $s3Client->putObject([
+                    'Bucket' => $bucket_name,
+                    'Key'    => $fileName,
+                    'Body'   => fopen($filePath, "r"),
+                    'ACL'    => 'public-read'
+                ]);
+            } catch (Exception $e) {
+                @unlink($filePath);
+                return [
+                    'message' => __('Unable to upload object to S3. Check write permissions/ACL.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            if (empty($upload['ObjectURL'])) {
+                @unlink($filePath);
+                return [
+                    'message' => __('Upload failed. Possible permission issue.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            /** --------------------------------------------------------
+             * STEP 5: Download test file back from S3
+             * -------------------------------------------------------- */
+            $localDownload = trailingslashit($upload_dir['basedir']) . 'acoofm-local-verify.txt';
+
+            try {
+                $s3Client->getObject([
+                    'Bucket' => $bucket_name,
+                    'Key'    => $fileName,
+                    'SaveAs' => $localDownload
+                ]);
+            } catch (Exception $e) {
+                @unlink($filePath);
+                return [
+                    'message' => __('Unable to download object from S3. Check read permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            if (!file_exists($localDownload)) {
+                @unlink($filePath);
+                return [
+                    'message' => __('Downloaded file missing. Read permission issue.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            @unlink($localDownload);
+
+            /** --------------------------------------------------------
+             * STEP 6: Delete object from S3
+             * -------------------------------------------------------- */
+            try {
+                $s3Client->deleteObject([
+                    'Bucket' => $bucket_name,
+                    'Key'    => $fileName
+                ]);
+            } catch (Exception $e) {
+                @unlink($filePath);
+                return [
+                    'message' => __('Unable to delete object from S3. Check delete permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            if ($s3Client->doesObjectExist($bucket_name, $fileName)) {
+                @unlink($filePath);
+                return [
+                    'message' => __('Delete failed. Object still exists in bucket.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            /** --------------------------------------------------------
+             * FINAL CLEANUP
+             * -------------------------------------------------------- */
+            if (file_exists($filePath)) {
+                @unlink($filePath);
+            }
+
+            /** --------------------------------------------------------
+             * SUCCESS
+             * -------------------------------------------------------- */
+            return [
+                'message' => __('Configuration for AWS/S3 verified successfully!', 'offload-media-cloud-storage'),
+                'code'    => 200,
+                'success' => true
+            ];
+
+        } catch (Aws\S3\Exception\S3Exception $ex) {
+            return [
+                'message' => $ex->getAwsErrorMessage() ?? __('Please check the authorization details', 'offload-media-cloud-storage'),
+                'code'    => $ex->getStatusCode() ?? 405,
+                'success' => false
+            ];
         }
     }
+
 
     /**
      * Connect Function To Identify the congfigurations are correct

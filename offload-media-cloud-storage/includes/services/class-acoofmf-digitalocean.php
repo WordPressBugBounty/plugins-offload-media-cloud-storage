@@ -115,6 +115,16 @@ class ACOOFMF_DIGITALOCEAN
      */
     public $hook_suffix = array();
 
+    /**
+     * The public base URL.
+     *
+     * @var     string
+     * @access  public
+     * @since   1.0.0
+     */
+    public $public_base_url;
+
+
 
     /**
      * Constructor function.
@@ -164,6 +174,15 @@ class ACOOFMF_DIGITALOCEAN
                                     'secret'    => $this->config['secret_key'],
                 ],
             ]);
+        }
+
+        if (!empty($this->config['bucket_name'])) {
+            $bucket = $this->config['bucket_name'];
+            $region = $this->config['region'];
+            $this->public_base_url = "https://{$bucket}.{$region}.digitaloceanspaces.com";
+        } else {
+            // Cannot build URL without bucket name
+            $this->public_base_url = null;
         }
     }
 
@@ -317,90 +336,155 @@ class ACOOFMF_DIGITALOCEAN
     public function verify($access_key, $secret_key, $region, $bucket_name, $transfer_accilaration = false)
     {
         if (
-            isset($region) && !empty($region) &&
-            isset($access_key) && !empty($access_key) &&
-            isset($secret_key) && !empty($secret_key) &&
-            isset($bucket_name) && !empty($bucket_name)
+            empty($region) || empty($access_key) ||
+            empty($secret_key) || empty($bucket_name)
         ) {
-            try {
-                $oceanClient = new S3Client([
-                    'version'                       => '2006-03-01',
-                    'region'                        => 'us-east-1',
-                    'endpoint'                      => 'https://'.$region.'.digitaloceanspaces.com',
-                    'use_aws_shared_config_files'   => false,
-                    'credentials'                   => [
-                                        'key'       => $access_key,
-                                        'secret'    => $secret_key,
-                    ],
-                ]);
+            return [
+                'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'),
+                'code'    => 405,
+                'success' => false
+            ];
+        }
 
-                //Listing all digital ocean Bucket
-                $buckets = $oceanClient->listBuckets();
-                $bucket_found = false;
-                $region_correct = false;
-                if ($buckets) {
-                    foreach ($buckets['Buckets'] as $bucket) {
-                        if ($bucket['Name']==$bucket_name) {
-                            $bucket_found = true;
-                        }
-                    }
-                } else {
-                    return array('message' => __('No Buckets found', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
+        try {
+            $oceanClient = new S3Client([
+                'version'                     => '2006-03-01',
+                'region'                      => 'us-east-1', // DO uses this fixed region for auth
+                'endpoint'                    => 'https://' . $region . '.digitaloceanspaces.com',
+                'use_aws_shared_config_files' => false,
+                'credentials'                 => [
+                    'key'    => $access_key,
+                    'secret' => $secret_key,
+                ],
+            ]);
+
+            /** ---------------------------------------------------
+             * STEP 1: Check if bucket exists
+             * -------------------------------------------------- */
+            $buckets      = $oceanClient->listBuckets();
+            $bucket_found = false;
+
+            foreach ($buckets['Buckets'] as $bucket) {
+                if ($bucket['Name'] === $bucket_name) {
+                    $bucket_found = true;
+                    break;
                 }
-                if ($bucket_found) {
-                    $fileName = "acoofm_verify.txt";
-                    $verify_file = fopen('./'.$fileName, "w");
-                    $txt = "We are verifying input/output operations in Digital ocean spaces\n";
-                    fwrite($verify_file, $txt);
-                    fclose($verify_file);
-
-                    $upload = $oceanClient->putObject([
-                        'Bucket' => $bucket_name,
-                        'Key'    => $fileName,
-                        'Body'   => fopen('./'.$fileName, "r"),
-                        'ACL'    => 'public-read', // make file 'public'
-                    ]);
-                    
-                    @unlink($fileName);
-                    if ($upload->get('ObjectURL')) {
-                        try {
-                            $getObject = $oceanClient->GetObject([
-                                'Bucket' => $bucket_name,
-                                'Key'    => $fileName,
-                                'SaveAs' => 'acoofm-local-verify.txt'
-                            ]);
-
-                            if (file_exists('acoofm-local-verify.txt')) {
-                                @unlink('acoofm-local-verify.txt');
-                                $oceanClient->deleteObject([
-                                    'Bucket' => $bucket_name,
-                                    'Key'    => $fileName,
-                                ]);
-                
-                                if (!$oceanClient->doesObjectExist($bucket_name, $fileName)) {
-                                    return array('message' => __('Configuration for Digital Ocean Spaces has verified successfully', 'offload-media-cloud-storage'), 'code' => 200, 'success' => true);
-                                } else {
-                                    return array('message' => __('User has permission issues on deleting the object from space, Please check ACL permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                                }
-                            } else {
-                                return array('message' => __('User has permission issues on getting the object from space, Please check ACL permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                            }
-                        } catch (Aws\S3\Exception\S3Exception $ex) {
-                            return array('message' => $ex->getAwsErrorMessage(), 'code' => $ex->getAwsErrorCode(), 'success' => false);
-                        }
-                    } else {
-                        return array('message' => __('User has permission issues on putting object in to space, Please check ACL permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                    }
-                } else {
-                    return array('message' => __('Space Name / Region is incorrect', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                }
-            } catch (Aws\S3\Exception\S3Exception $ex) {
-                return array('message' =>  $ex->getAwsErrorMessage() ?: __('Please check the authorization details', 'offload-media-cloud-storage'), 'code' => $ex->getStatusCode() ?? 405 , 'success' => false);
             }
-        } else {
-            return array( 'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'), 'code' =>  405, 'success' => false);
+
+            if (!$bucket_found) {
+                return [
+                    'message' => __('Space Name / Region is incorrect', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            /** ---------------------------------------------------
+             * STEP 2: Create test file in WordPress uploads folder
+             * -------------------------------------------------- */
+            $upload_dir = wp_upload_dir();
+            $local_file = trailingslashit($upload_dir['basedir']) . 'acoofm_verify.txt';
+
+            $verify_file = fopen($local_file, "w");
+
+            if (!$verify_file) {
+                return [
+                    'message' => __('Unable to create verification file. Check directory permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 500,
+                    'success' => false
+                ];
+            }
+
+            fwrite($verify_file, "We are verifying input/output operations in DigitalOcean Spaces\n");
+            fclose($verify_file);
+
+            $fileName = 'acoofm_verify.txt';
+
+            /** ---------------------------------------------------
+             * STEP 3: Upload test file to DO Spaces
+             * -------------------------------------------------- */
+            $upload = $oceanClient->putObject([
+                'Bucket' => $bucket_name,
+                'Key'    => $fileName,
+                'Body'   => fopen($local_file, "r"),
+                'ACL'    => 'public-read',
+            ]);
+
+            if (!isset($upload['ObjectURL'])) {
+                @unlink($local_file);
+
+                return [
+                    'message' => __('User has permission issues on uploading object. Check ACL & policies.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            /** ---------------------------------------------------
+             * STEP 4: Try downloading the file back locally
+             * -------------------------------------------------- */
+            $download_to = trailingslashit($upload_dir['basedir']) . 'acoofm-local-verify.txt';
+
+            try {
+                $oceanClient->getObject([
+                    'Bucket' => $bucket_name,
+                    'Key'    => $fileName,
+                    'SaveAs' => $download_to
+                ]);
+            } catch (Aws\S3\Exception\S3Exception $ex) {
+                @unlink($local_file);
+
+                return [
+                    'message' => __('User cannot GET object. Check read permission.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            // Cleanup local downloaded file
+            if (file_exists($download_to)) {
+                @unlink($download_to);
+            }
+
+            /** ---------------------------------------------------
+             * STEP 5: Delete test object from DO Spaces
+             * -------------------------------------------------- */
+            $oceanClient->deleteObject([
+                'Bucket' => $bucket_name,
+                'Key'    => $fileName,
+            ]);
+
+            // Cleanup local verification file
+            if (file_exists($local_file)) {
+                @unlink($local_file);
+            }
+
+            if ($oceanClient->doesObjectExist($bucket_name, $fileName)) {
+                return [
+                    'message' => __('User cannot delete object from Space. Check delete permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            /** ---------------------------------------------------
+             * ALL GOOD 🎉
+             * -------------------------------------------------- */
+            return [
+                'message' => __('Configuration for DigitalOcean Spaces has been verified successfully!', 'offload-media-cloud-storage'),
+                'code'    => 200,
+                'success' => true
+            ];
+
+        } catch (Aws\S3\Exception\S3Exception $ex) {
+            return [
+                'message' => $ex->getAwsErrorMessage() ?: __('Please check the authorization details', 'offload-media-cloud-storage'),
+                'code'    => $ex->getStatusCode() ?? 405,
+                'success' => false
+            ];
         }
     }
+
 
     /**
      * Connect Function To Identify the congfigurations are correct
@@ -533,9 +617,12 @@ class ACOOFMF_DIGITALOCEAN
                             }
                         } while (!isset($uploaded));
                         if (isset($uploaded['ObjectURL']) && !empty($uploaded['ObjectURL'])) {
-                            $url = (!preg_match("~^(?:f|ht)tps?://~i", $uploaded['ObjectURL'])) 
-                                        ? "https://" . $uploaded['ObjectURL']
-                                        : $uploaded['ObjectURL'];
+                            // Build your clean URL
+                            $baseUrl = rtrim($this->public_base_url, '/');
+                            $key     = ltrim($upload_path, '/');
+
+                            $url = $baseUrl . '/' . $key;
+
 
                             $result = array(
                                 'success' => true,

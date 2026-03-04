@@ -341,70 +341,162 @@ class ACOOFMF_GOOGLE
      */
     public function verify($config_file, $bucket_name)
     {
-        if (
-            isset($config_file) && !empty($config_file) &&
-            // isset($config_file['path']) && !empty($config_file['path']) &&
-            isset($bucket_name) && !empty($bucket_name)
-        ) {
-            try {
-                
-                $googleClient = new StorageClient([
-                    'keyFilePath' => $config_file,
-                ]);
+        if (empty($config_file) || empty($bucket_name)) {
+            return [
+                'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'),
+                'code'    => 405,
+                'success' => false
+            ];
+        }
 
-                $bucket = $googleClient->bucket($bucket_name);
-                if ($bucket->exists()) {
-                    $bucket_found = true;
-                } else {
-                    return array('message' => __('No Buckets found', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                }
-                if ($bucket_found) {
-                    $fileName = "acoofm_verify.txt";
-                    $verify_file = fopen('./' . $fileName, "w");
-                    $txt = "We are verifying input/output operations in s3\n";
-                    fwrite($verify_file, $txt);
-                    fclose($verify_file);
+        try {
+            // Initialize Google Cloud Storage client
+            $googleClient = new StorageClient([
+                'keyFilePath' => $config_file,
+            ]);
 
-                    $options = [
-                        'name' => $fileName,
-                    ];
-                    $settings = acoofm_get_settings();
-                    if (isset($settings['enable_gcs_acl']) && $settings['enable_gcs_acl']) {
-                        $options['predefinedAcl'] = 'publicRead';
-                    }
+            $bucket = $googleClient->bucket($bucket_name);
 
-                    $upload = $bucket->upload(fopen('./' . $fileName, 'r'), $options);
-
-                    @unlink('./' . $fileName);
-
-                    $object = $bucket->object($fileName);
-                    if ($object->exists()) {
-                        $object->downloadToFile('./' . $fileName);
-                        if (file_exists($fileName)) {
-                            @unlink('./' . $fileName);
-                            $object->delete();
-
-                            if (!$object->exists()) {
-                                return array('message' => __('Configuration for Googlecloud Storage verified successfully', 'offload-media-cloud-storage'), 'code' => 200, 'success' => true);
-                            } else {
-                                return array('message' => __('Bucket has permission issues on deleting the object from bucket, Please check permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                            }
-                        } else {
-                            return array('message' => __('Bucket has permission issues on getting the object from bucket, Please check permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                        }
-                    } else {
-                        return array('message' => __('Bucket has permission issues on putting object in to bucket, Please check permission as well as policies', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                    }
-                } else {
-                    return array('message' => __('Bucket Name is incorrect', 'offload-media-cloud-storage'), 'code' => 403, 'success' => false);
-                }
-            } catch (Exception $ex) {
-                return array('message' => $ex->getMessage(), 'code' => $ex->getCode(), 'success' => false);
+            if (!$bucket->exists()) {
+                return [
+                    'message' => __('Bucket not found. Please check bucket name.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
             }
-        } else {
-            return array('message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'), 'code' => 405, 'success' => false);
+
+            /** --------------------------------------------------------
+             * STEP 1: Create test file in WP Uploads folder
+             * -------------------------------------------------------- */
+
+            $upload_dir = wp_upload_dir();
+            $fileName   = 'acoofm_verify.txt'; // GCS test file name
+            $verify_path = trailingslashit($upload_dir['basedir']) . $fileName;
+
+            $verify_file = fopen($verify_path, "w");
+
+            if (!$verify_file) {
+                return [
+                    'message' => __('Unable to create verification file. Check directory permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 500,
+                    'success' => false
+                ];
+            }
+
+            fwrite($verify_file, "We are verifying input/output operations in Google Cloud Storage\n");
+            fclose($verify_file);
+
+            /** --------------------------------------------------------
+             * STEP 2: Upload the file to GCS
+             * -------------------------------------------------------- */
+
+            $options = ['name' => $fileName];
+
+            // If user enabled ACL → make object public
+            $settings = acoofm_get_settings();
+            if (!empty($settings['enable_gcs_acl'])) {
+                $options['predefinedAcl'] = 'publicRead';
+            }
+
+            $upload = $bucket->upload(
+                fopen($verify_path, "r"),
+                $options
+            );
+
+            if (!$upload) {
+                @unlink($verify_path);
+                return [
+                    'message' => __('Permission issue: Unable to upload object to Google Cloud Storage.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            /** --------------------------------------------------------
+             * STEP 3: Confirm object exists
+             * -------------------------------------------------------- */
+
+            $object = $bucket->object($fileName);
+
+            if (!$object->exists()) {
+                @unlink($verify_path);
+                return [
+                    'message' => __('Permission issue: Unable to verify object in GCS bucket.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            /** --------------------------------------------------------
+             * STEP 4: Download the file back to WP uploads
+             * -------------------------------------------------------- */
+
+            $download_path = trailingslashit($upload_dir['basedir']) . 'acoofm-local-verify.txt';
+
+            try {
+                $object->downloadToFile($download_path);
+            } catch (Exception $e) {
+                @unlink($verify_path);
+
+                return [
+                    'message' => __('Unable to download object. Check read permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            if (!file_exists($download_path)) {
+                @unlink($verify_path);
+
+                return [
+                    'message' => __('User does not have permission to read the object from GCS.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            // Remove downloaded test file
+            @unlink($download_path);
+
+            /** --------------------------------------------------------
+             * STEP 5: Delete object from GCS
+             * -------------------------------------------------------- */
+
+            try {
+                $object->delete();
+            } catch (Exception $e) {
+                @unlink($verify_path);
+
+                return [
+                    'message' => __('Unable to delete object. Check delete permissions.', 'offload-media-cloud-storage'),
+                    'code'    => 403,
+                    'success' => false
+                ];
+            }
+
+            // Final cleanup of local verification file
+            if (file_exists($verify_path)) {
+                @unlink($verify_path);
+            }
+
+            /** --------------------------------------------------------
+             * ALL GOOD ✔
+             * -------------------------------------------------------- */
+            return [
+                'message' => __('Configuration for Google Cloud Storage verified successfully!', 'offload-media-cloud-storage'),
+                'code'    => 200,
+                'success' => true
+            ];
+
+        } catch (Exception $ex) {
+            return [
+                'message' => $ex->getMessage(),
+                'code'    => $ex->getCode() ?: 405,
+                'success' => false
+            ];
         }
     }
+
 
     /**
      * Connect Function To Identify the congfigurations are correct
