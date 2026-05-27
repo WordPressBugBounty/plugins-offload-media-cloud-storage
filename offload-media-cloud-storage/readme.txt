@@ -7,8 +7,8 @@ Tags: media, offload, cloud, CDN, performance
 License: GPLv2 or later
 Requires at least: 5.6
 Requires PHP: 7.2
-Tested up to: 6.8
-Stable tag: 1.7.0
+Tested up to: 7.0
+Stable tag: 1.8.0
 
 Offload Media moves your WordPress files to cloud storage (AWS S3, DigitalOcean, Cloudflare R2, Google Cloud) to improve site performance.
 
@@ -89,11 +89,14 @@ Amazon S3, Google Cloud Storage and Digital Ocean Spaces, Cloudflare R2
 Yes, It is fully compatible with WPML
 
 == Upgrade Notice ==
-= 1.7.0 =
-* WordPress 6.9 compatibility
+= 1.8.0 =
+* WordPress 7.0 compatibility
 * Improvements and bug fixes
 
 == Changelog ==
+= 1.8.0 =
+* WordPress 7.0 compatibility
+* Improvements and bug fixes
 = 1.7.0 =
 * WordPress 6.9 compatibility
 * Improvements and bug fixes
