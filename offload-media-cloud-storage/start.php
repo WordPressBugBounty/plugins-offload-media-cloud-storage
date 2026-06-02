@@ -1,13 +1,13 @@
 <?php
 /**
  * Plugin Name: Offload Media - Cloud Storage
- * Version: 1.8.0
- * Description: Offload Media - Cloud Storage helps to offload your wordpress media to the cloud server services.
+ * Version: 1.8.1
+ * Description: Offload Media - Cloud Storage helps to offload your WordPress media to cloud storage services.
  * Author: Acowebs
- * Author URI: http://acowebs.com
- * Requires at least: 4.4.0
- * Tested up to: 6.9
- * Requires PHP: 7.0 or higher
+ * Author URI: https://acowebs.com
+ * Requires at least: 5.6
+ * Requires PHP: 7.2
+ * Tested up to: 7.0
  * Text Domain: offload-media-cloud-storage
  */
  
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 global $wpdb;
 
 define('ACOOFM_TOKEN', 'acoofm');
-define('ACOOFM_VERSION', '1.8.0');
+define('ACOOFM_VERSION', '1.8.1');
 define('ACOOFM_FILE', __FILE__);
 define('ACOOFM_PLUGIN_NAME', 'Offload Media - Cloud Storage');
 
