@@ -174,90 +174,12 @@ class ACOOFMF_REWRITEURL {
      * @return WP_REST_Response Modified response with rewritten image URLs.
      */
     public function acoofmf_rest_prepare_page($response, $post, $request) {
-        // Only proceed if rewrite_url is enabled in settings
         if (!(isset(self::$settings['rewrite_url']) && self::$settings['rewrite_url'])) {
             return $response;
         }
 
-        global $wpdb;
-
-        // Get cached CDN base URLs
-        $cdn_urls = get_transient('acoofmf_cdn_base_urls');
-        if (!is_array($cdn_urls)) {
-            $cdn_urls = [];
-        }
-
-        // Check if content exists in the response
         if (isset($response->data['content']) && !empty($response->data['content']['raw'])) {
-            $content = $response->data['content']['raw'];
-
-            // Replace image src based on wp-image-{ID} class
-            $content = preg_replace_callback(
-                '/<img[^>]+class="[^"]*wp-image-(\d+)[^"]*"[^>]*>/',
-                function ($matches) use (&$cdn_urls, $wpdb) {
-                    $img_tag = $matches[0];
-                    $attachment_id = (int) $matches[1];
-
-                    // Get original attachment URL
-                    $original_url = wp_get_attachment_url($attachment_id);
-                    if (!$original_url) {
-                        // Could not get original URL, leave unchanged
-                        return $img_tag;
-                    }
-
-                    // Check if CDN base URL is cached for this attachment
-                    if (!isset($cdn_urls[$attachment_id])) {
-                        $item_id = get_post_meta($attachment_id, ACOOFM_ATTACHMENT_META_KEY, true);
-
-                        if (!empty($item_id)) {
-                            // Get CDN URL from database
-                            $url = false;
-                            try {
-                                $url = $wpdb->get_var(
-                                    $wpdb->prepare("SELECT url FROM " . ACOOFM_ITEM_TABLE . " WHERE id = %d", $item_id)
-                                );
-                            } catch (Exception $e) {
-                                // Log error if needed
-                                error_log('CDN URL DB error: ' . $e->getMessage());
-                                return $img_tag;
-                            }
-
-                            if (!empty($url)) {
-                                $cdn_urls[$attachment_id] = dirname($url);
-                                set_transient('acoofmf_cdn_base_urls', $cdn_urls, 12 * HOUR_IN_SECONDS); // Cache for 12 hours
-                            } else {
-                                // CDN URL not found in DB, leave unchanged
-                                return $img_tag;
-                            }
-                        } else {
-                            // No item ID found, leave unchanged
-                            return $img_tag;
-                        }
-                    }
-
-                    $cdn_base_url = isset($cdn_urls[$attachment_id]) ? $cdn_urls[$attachment_id] : '';
-                    if (empty($cdn_base_url)) {
-                        // CDN base URL not found, leave unchanged
-                        return $img_tag;
-                    }
-
-                    // Rewrite to CDN URL
-                    $cdn_url = str_replace(site_url('/wp-content/uploads'), $cdn_base_url, $original_url);
-
-                    // Replace src attribute in the <img> tag
-                    $new_img_tag = preg_replace('/src="[^"]*"/', 'src="' . esc_url($cdn_url) . '"', $img_tag);
-                    if ($new_img_tag === null) {
-                        // preg_replace error, leave unchanged
-                        return $img_tag;
-                    }
-
-                    return $new_img_tag;
-                },
-                $content
-            );
-
-            // Update the response content
-            $response->data['content']['raw'] = $content;
+            $response->data['content']['raw'] = self::rewrite_content_urls($response->data['content']['raw']);
         }
 
         return $response;
@@ -276,39 +198,6 @@ class ACOOFMF_REWRITEURL {
             return $filtered_image;
         }
 
-        global $wpdb;
-        global $acoofmItem;
-
-        // Try to get the cached CDN URLs array
-        $cdn_urls = get_transient('acoofmf_cdn_base_urls');
-        if (!is_array($cdn_urls)) {
-            $cdn_urls = [];
-        }
-
-        // Check if URL is already cached for this attachment ID
-        if (!isset($cdn_urls[$attachment_id])) {
-            $item_id = get_post_meta($attachment_id, ACOOFM_ATTACHMENT_META_KEY, true);
-
-            if (!empty($item_id)) {
-                $url = $wpdb->get_var(
-                    $wpdb->prepare("SELECT url FROM " . ACOOFM_ITEM_TABLE . " WHERE id = %d", $item_id)
-                );
-
-                if (!empty($url)) {
-                    $cdn_urls[$attachment_id] = dirname($url);
-                    set_transient('acoofmf_cdn_base_urls', $cdn_urls, 12 * HOUR_IN_SECONDS); // Cache for 12 hours
-                }
-            } else {
-                return $filtered_image; // No item ID
-            }
-        }
-
-        $cdn_base_url = $cdn_urls[$attachment_id];
-        if (empty($cdn_base_url)) {
-            return $filtered_image; // No URL found in DB or cache
-        }
-
-        // Now replace the src in <img> tag
         libxml_use_internal_errors(true);
         $doc = new DOMDocument();
         $doc->loadHTML('<meta http-equiv="Content-Type" content="text/html; charset=utf-8">' . $filtered_image);
@@ -316,16 +205,20 @@ class ACOOFMF_REWRITEURL {
         $imgs = $doc->getElementsByTagName('img');
         foreach ($imgs as $img) {
             $src = $img->getAttribute('src');
-            $path = parse_url($src, PHP_URL_PATH);
-            $thumbnail_size = self::acoofm_get_size_from_src($path, $attachment_id);
-            
-            if ($thumbnail_size === 'full') {
-                $new_src = $acoofmItem->get_url($attachment_id);
-            } else {
-                $new_src = $acoofmItem->get_thumbnail_url($attachment_id, $thumbnail_size);
+            if (empty($src)) {
+                continue;
             }
 
-            $img->setAttribute('src', $new_src);
+            $path = parse_url($src, PHP_URL_PATH);
+            $thumbnail_size = self::acoofm_get_size_from_src($path, $attachment_id);
+            if ($thumbnail_size === false) {
+                $thumbnail_size = 'full';
+            }
+
+            $new_src = ACOOFMF_URL_Rewrite_Resolver::resolve($src, (int) $attachment_id, $thumbnail_size);
+            if (!empty($new_src)) {
+                $img->setAttribute('src', $new_src);
+            }
         }
 
         $body = $doc->getElementsByTagName('body')->item(0);
@@ -337,7 +230,14 @@ class ACOOFMF_REWRITEURL {
         return $filtered_html;
     }
 
-    function acoofm_get_size_from_src($src, $attachment_id) {
+    /**
+     * Resolve a WordPress image size slug from an image src path.
+     *
+     * @param string $src           Image src path or URL.
+     * @param int    $attachment_id Attachment ID.
+     * @return string|false Size slug, or false if it cannot be determined.
+     */
+    private static function acoofm_get_size_from_src($src, $attachment_id) {
         if (empty($src) || empty($attachment_id)) {
             return false;
         }
@@ -363,6 +263,51 @@ class ACOOFMF_REWRITEURL {
         return 'full';
     }
 
+    /**
+     * Rewrite attachment image URLs in HTML content via the central resolver.
+     *
+     * @param string $content HTML content.
+     * @return string
+     */
+    private static function rewrite_content_urls($content) {
+        if (!is_string($content) || $content === '') {
+            return $content;
+        }
+
+        return preg_replace_callback(
+            '/<img[^>]+class="[^"]*wp-image-(\d+)[^"]*"[^>]*>/',
+            function ($matches) {
+                $img_tag       = $matches[0];
+                $attachment_id = (int) $matches[1];
+
+                if (!preg_match('/src="([^"]*)"/', $img_tag, $src_match)) {
+                    return $img_tag;
+                }
+
+                $original_src = $src_match[1];
+                $path         = parse_url($original_src, PHP_URL_PATH);
+                $size         = self::acoofm_get_size_from_src($path, $attachment_id);
+                if ($size === false) {
+                    $size = 'full';
+                }
+
+                $resolved = ACOOFMF_URL_Rewrite_Resolver::resolve($original_src, $attachment_id, $size);
+                if ($resolved === $original_src) {
+                    return $img_tag;
+                }
+
+                $new_img_tag = preg_replace(
+                    '/src="[^"]*"/',
+                    'src="' . esc_url($resolved) . '"',
+                    $img_tag,
+                    1
+                );
+
+                return ($new_img_tag === null) ? $img_tag : $new_img_tag;
+            },
+            $content
+        );
+    }
 
 
     /**
@@ -461,7 +406,7 @@ class ACOOFMF_REWRITEURL {
         // Replace URLs efficiently
         $new_content = preg_replace_callback(
             $urls_regex,
-            function($pattern_match) use ($url_matches, $acoofmItem) {
+            function($pattern_match) use ($url_matches) {
                 $file_url = $pattern_match[0];
                 
                 // Check if we have a cached result
@@ -475,13 +420,18 @@ class ACOOFMF_REWRITEURL {
                 // Check if this URL has a match
                 if (isset($url_matches[$file_url])) {
                     $match = $url_matches[$file_url];
-                    $url = ($match['size'] == 'full') 
-                        ? $acoofmItem->get_url((int)$match['item_id']) 
-                        : $acoofmItem->get_thumbnail_url((int)$match['item_id'], $match['size']);
-                    
-                    // Cache the result
-                    self::$stored_items[$file_url] = ['url' => $url ?: '', 'found' => (bool)$url];
-                    return $url ?: $file_url;
+                    $url = ACOOFMF_URL_Rewrite_Resolver::resolve(
+                        $file_url,
+                        (int) $match['item_id'],
+                        $match['size']
+                    );
+
+                    self::$stored_items[$file_url] = array(
+                        'url'   => ( $url !== $file_url ) ? $url : '',
+                        'found' => ( $url !== $file_url ),
+                    );
+
+                    return $url;
                 }
                 
                 // No match found, cache the negative result

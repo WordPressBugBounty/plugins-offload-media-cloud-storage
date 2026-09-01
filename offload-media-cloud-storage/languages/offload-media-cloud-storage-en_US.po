@@ -108,6 +108,12 @@ msgstr ""
 msgid "View Documentation"
 msgstr ""
 
+#: src/pages/Configure/ConfigureStorageBucket.jsx:297
+msgid ""
+"Your credentials cannot list buckets. Enter the exact bucket name. Listing "
+"permission is only needed for the bucket dropdown."
+msgstr ""
+
 #: src/pages/Dashboard.js:105
 #: src/pages/PluginSettings.js:94
 msgid "Settings"
@@ -445,8 +451,9 @@ msgstr ""
 
 #: src/utils/variables.jsx:121
 msgid ""
-"Provide key file and bucketname to configure offload media. Clicking on "
-"Next will verify your settings."
+"Provide your Google Cloud key file to continue. Bucket listing permission "
+"is only needed for the dropdown; otherwise enter the bucket name manually. "
+"Clicking Next will validate your credentials."
 msgstr ""
 
 #: src/utils/variables.jsx:131
@@ -511,9 +518,9 @@ msgstr ""
 
 #: src/utils/variables.jsx:195
 msgid ""
-"Provide your Digial Ocean Spaces credentials and the name of your cloud "
-"space to configure offload media. Clicking on Next will verify your "
-"settings."
+"Provide your DigitalOcean Spaces credentials to continue. Bucket listing "
+"permission is only needed for the dropdown; otherwise enter the space name "
+"manually. Clicking Next will validate your keys."
 msgstr ""
 
 #: src/utils/variables.jsx:22
@@ -535,8 +542,9 @@ msgstr ""
 
 #: src/utils/variables.jsx:26
 msgid ""
-"Provide your Amazon credentials and the name of your S3 bucket to configure "
-"offload media. Clicking on Next will verify your settings."
+"Provide your Amazon credentials to continue. Bucket listing permission is "
+"only needed for the dropdown; otherwise enter the bucket name manually. "
+"Clicking Next will validate your keys."
 msgstr ""
 
 #: src/utils/variables.jsx:266
@@ -565,8 +573,9 @@ msgstr ""
 
 #: src/utils/variables.jsx:275
 msgid ""
-"Provide your Cloudflare R2 credentials and the name of your cloud space to "
-"configure offload media. Clicking on Next will verify your settings."
+"Provide your Cloudflare R2 credentials to continue. Object Read & Write on "
+"your bucket is enough for offloading. Admin Read is only needed if you want "
+"the bucket dropdown. Clicking Next will validate your keys."
 msgstr ""
 
 #: src/utils/variables.jsx:285

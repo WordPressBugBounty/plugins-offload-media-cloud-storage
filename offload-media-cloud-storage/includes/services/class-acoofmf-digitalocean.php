@@ -277,11 +277,17 @@ class ACOOFMF_DIGITALOCEAN
      */
     public function verify_keys($accessKey, $secretKey) {
         if (!empty($accessKey) && !empty($secretKey)) {
-            try {
+            $provider_label = 'DigitalOcean Spaces';
+            $credentials_payload = array(
+                'access_key' => $accessKey,
+                'secret_key' => $secretKey
+            );
 
+            try {
                 $regions = ['nyc3', 'sfo2', 'sgp1', 'ams3', 'fra1']; // All DigitalOcean Spaces regions
-                $allBuckets = [];
                 $bucketDetails = [];
+                $list_denied = false;
+                $seen_buckets = array();
 
                 foreach ($regions as $region) {
                     $client = new S3Client([
@@ -294,34 +300,53 @@ class ACOOFMF_DIGITALOCEAN
                         ],
                         'use_path_style_endpoint' => false
                     ]);
-                    
-                    $result = $client->listBuckets();
-                    $bucketNames = [];
+
+                    try {
+                        $result = $client->listBuckets();
+                    } catch (Aws\S3\Exception\S3Exception $list_ex) {
+                        $classified = ACOOFMF_VERIFY_HELPER::classify_s3_error($list_ex, 'list', $provider_label);
+                        if ($classified['error_code'] === 'list_denied') {
+                            $list_denied = true;
+                            continue;
+                        }
+                        return ACOOFMF_VERIFY_HELPER::failure_from_classified($classified);
+                    }
+
                     foreach ($result['Buckets'] as $bucket) {
                         $bucketName = $bucket['Name'];
-                        $bucketNames[] = $bucketName;
+                        if (isset($seen_buckets[$bucketName])) {
+                            continue;
+                        }
+                        $seen_buckets[$bucketName] = true;
                         $bucketDetails[] = [
                             'name' => $bucketName,
                             'region' => $region
                         ];
                     }
-                    
-                    $allBuckets[$region] = $bucketNames;
                 }
 
-                return array(
-                    'message' => __('Digital Ocean credentials are valid', 'offload-media-cloud-storage'),
-                    'code' => 200,
-                    'success' => true,
-                    'credentials' => [
-                        'access_key' => $accessKey,
-                        'secret_key' => $secretKey
-                    ],
-                    'buckets' => $bucketDetails
+                if (!empty($bucketDetails)) {
+                    return ACOOFMF_VERIFY_HELPER::listed_success(
+                        $credentials_payload,
+                        $bucketDetails,
+                        __('Digital Ocean credentials are valid', 'offload-media-cloud-storage')
+                    );
+                }
+
+                if ($list_denied) {
+                    return ACOOFMF_VERIFY_HELPER::list_denied_success($credentials_payload, $provider_label);
+                }
+
+                return ACOOFMF_VERIFY_HELPER::listed_success(
+                    $credentials_payload,
+                    array(),
+                    __('Digital Ocean credentials are valid', 'offload-media-cloud-storage')
                 );
 
             } catch (Aws\S3\Exception\S3Exception $ex){
-                return array('message' => $ex->getAwsErrorMessage() ?? __('Please check the authorization details', 'offload-media-cloud-storage'), 'code' => $ex->getStatusCode() ?? 405, 'success' => false);
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($ex, 'auth', $provider_label)
+                );
             }
         } else {
             return array('message' => __('Access key or secret key is missing', 'offload-media-cloud-storage'), 'code' => 400, 'success' => false);
@@ -335,6 +360,8 @@ class ACOOFMF_DIGITALOCEAN
      */
     public function verify($access_key, $secret_key, $region, $bucket_name, $transfer_accilaration = false)
     {
+        $provider_label = 'DigitalOcean Spaces';
+
         if (
             empty($region) || empty($access_key) ||
             empty($secret_key) || empty($bucket_name)
@@ -342,7 +369,8 @@ class ACOOFMF_DIGITALOCEAN
             return [
                 'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'),
                 'code'    => 405,
-                'success' => false
+                'success' => false,
+                'error_code' => 'insufficient_data',
             ];
         }
 
@@ -359,24 +387,11 @@ class ACOOFMF_DIGITALOCEAN
             ]);
 
             /** ---------------------------------------------------
-             * STEP 1: Check if bucket exists
+             * STEP 1: Scoped space access check (no account-wide list)
              * -------------------------------------------------- */
-            $buckets      = $oceanClient->listBuckets();
-            $bucket_found = false;
-
-            foreach ($buckets['Buckets'] as $bucket) {
-                if ($bucket['Name'] === $bucket_name) {
-                    $bucket_found = true;
-                    break;
-                }
-            }
-
-            if (!$bucket_found) {
-                return [
-                    'message' => __('Space Name / Region is incorrect', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+            $probe = ACOOFMF_VERIFY_HELPER::probe_bucket_access($oceanClient, $bucket_name, $provider_label);
+            if (empty($probe['ok'])) {
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified($probe);
             }
 
             /** ---------------------------------------------------
@@ -391,7 +406,8 @@ class ACOOFMF_DIGITALOCEAN
                 return [
                     'message' => __('Unable to create verification file. Check directory permissions.', 'offload-media-cloud-storage'),
                     'code'    => 500,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'local_fs',
                 ];
             }
 
@@ -403,12 +419,19 @@ class ACOOFMF_DIGITALOCEAN
             /** ---------------------------------------------------
              * STEP 3: Upload test file to DO Spaces
              * -------------------------------------------------- */
-            $upload = $oceanClient->putObject([
-                'Bucket' => $bucket_name,
-                'Key'    => $fileName,
-                'Body'   => fopen($local_file, "r"),
-                'ACL'    => 'public-read',
-            ]);
+            try {
+                $upload = $oceanClient->putObject([
+                    'Bucket' => $bucket_name,
+                    'Key'    => $fileName,
+                    'Body'   => fopen($local_file, "r"),
+                    'ACL'    => 'public-read',
+                ]);
+            } catch (Exception $e) {
+                @unlink($local_file);
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($e, 'write', $provider_label)
+                );
+            }
 
             if (!isset($upload['ObjectURL'])) {
                 @unlink($local_file);
@@ -416,7 +439,8 @@ class ACOOFMF_DIGITALOCEAN
                 return [
                     'message' => __('User has permission issues on uploading object. Check ACL & policies.', 'offload-media-cloud-storage'),
                     'code'    => 403,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'write_denied',
                 ];
             }
 
@@ -433,12 +457,9 @@ class ACOOFMF_DIGITALOCEAN
                 ]);
             } catch (Aws\S3\Exception\S3Exception $ex) {
                 @unlink($local_file);
-
-                return [
-                    'message' => __('User cannot GET object. Check read permission.', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($ex, 'read', $provider_label)
+                );
             }
 
             // Cleanup local downloaded file
@@ -449,10 +470,17 @@ class ACOOFMF_DIGITALOCEAN
             /** ---------------------------------------------------
              * STEP 5: Delete test object from DO Spaces
              * -------------------------------------------------- */
-            $oceanClient->deleteObject([
-                'Bucket' => $bucket_name,
-                'Key'    => $fileName,
-            ]);
+            try {
+                $oceanClient->deleteObject([
+                    'Bucket' => $bucket_name,
+                    'Key'    => $fileName,
+                ]);
+            } catch (Exception $e) {
+                @unlink($local_file);
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($e, 'delete', $provider_label)
+                );
+            }
 
             // Cleanup local verification file
             if (file_exists($local_file)) {
@@ -463,12 +491,13 @@ class ACOOFMF_DIGITALOCEAN
                 return [
                     'message' => __('User cannot delete object from Space. Check delete permissions.', 'offload-media-cloud-storage'),
                     'code'    => 403,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'delete_denied',
                 ];
             }
 
             /** ---------------------------------------------------
-             * ALL GOOD 🎉
+             * ALL GOOD
              * -------------------------------------------------- */
             return [
                 'message' => __('Configuration for DigitalOcean Spaces has been verified successfully!', 'offload-media-cloud-storage'),
@@ -477,11 +506,9 @@ class ACOOFMF_DIGITALOCEAN
             ];
 
         } catch (Aws\S3\Exception\S3Exception $ex) {
-            return [
-                'message' => $ex->getAwsErrorMessage() ?: __('Please check the authorization details', 'offload-media-cloud-storage'),
-                'code'    => $ex->getStatusCode() ?? 405,
-                'success' => false
-            ];
+            return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                ACOOFMF_VERIFY_HELPER::classify_s3_error($ex, 'auth', $provider_label)
+            );
         }
     }
 

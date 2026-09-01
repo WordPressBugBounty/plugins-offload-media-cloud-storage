@@ -184,6 +184,13 @@ class ACOOFMF_MINIO
      */
     public function verify_keys($accessKey, $secretKey, $endpoint) {
         if (!empty($accessKey) && !empty($secretKey)) {
+            $provider_label = 'MinIO';
+            $credentials_payload = array(
+                'access_key' => $accessKey,
+                'secret_key' => $secretKey,
+                'endpoint' => $endpoint,
+            );
+
             try {
                 $credentials = [
                     'version'     => '2006-03-01',
@@ -197,22 +204,27 @@ class ACOOFMF_MINIO
                 ];
                 $credentials = apply_filters('acoofm_minio_client_credentials', $credentials, $this->config);
                 $s3 = new S3Client($credentials);
-                
-                $result = $s3->listBuckets();
-                $bucketNames = [];
+
+                try {
+                    $result = $s3->listBuckets();
+                } catch (Aws\S3\Exception\S3Exception $list_ex) {
+                    $classified = ACOOFMF_VERIFY_HELPER::classify_s3_error($list_ex, 'list', $provider_label);
+                    if ($classified['error_code'] === 'list_denied') {
+                        return ACOOFMF_VERIFY_HELPER::list_denied_success($credentials_payload, $provider_label);
+                    }
+                    return ACOOFMF_VERIFY_HELPER::failure_from_classified($classified);
+                }
+
                 $bucketDetails = [];
                 foreach ($result['Buckets'] as $bucket) {
-
                     $bucketName = $bucket['Name'];
                     $region = 'unknown';
-                    
+
                     try {
                         $locationResult = $s3->getBucketLocation([
                             'Bucket' => $bucketName
                         ]);
-                        
                         $region = $locationResult['LocationConstraint'] ?: 'us-east-1';
-                        
                     } catch (AwsException $e) {
                         if ($e->getAwsErrorCode() === 'AuthorizationHeaderMalformed') {
                             $errorMessage = $e->getMessage();
@@ -220,32 +232,26 @@ class ACOOFMF_MINIO
                                 $region = $matches[1];
                             }
                         } else {
-                            // Other error
-                            $region = 'Error: ' . $e->getMessage();
+                            $region = 'us-east-1';
                         }
                     }
-                    
+
                     $bucketDetails[] = [
                         'name' => $bucketName,
                         'region' => $region
                     ];
-                    $bucketNames[] = $bucket['Name'];
                 }
 
-                return array(
-                    'message' => __('AWS credentials are valid', 'offload-media-cloud-storage'),
-                    'code' => 200,
-                    'success' => true,
-                    'credentials' => [
-                        'access_key' => $accessKey,
-                        'secret_key' => $secretKey,
-                        'endpoint' => $endpoint,
-                    ],
-                    'buckets' => $bucketDetails
+                return ACOOFMF_VERIFY_HELPER::listed_success(
+                    $credentials_payload,
+                    $bucketDetails,
+                    __('MinIO credentials are valid', 'offload-media-cloud-storage')
                 );
 
             } catch (Aws\S3\Exception\S3Exception $ex){
-                return array('message' => $ex->getAwsErrorMessage() ?? __('Please check the authorization details', 'offload-media-cloud-storage'), 'code' => $ex->getStatusCode() ?? 405, 'success' => false);
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($ex, 'auth', $provider_label)
+                );
             }
         } else {
             return array('message' => __('Access key or secret key is missing', 'offload-media-cloud-storage'), 'code' => 400, 'success' => false);
@@ -347,11 +353,14 @@ class ACOOFMF_MINIO
      */
     public function verify($access_key, $secret_key, $endpoint, $bucket_name, $region = 'us-east-1', $transfer_accilaration = false)
     {
-        if (empty($region) || empty($access_key) || empty($secret_key) || empty($bucket_name)) {
+        $provider_label = 'MinIO';
+
+        if (empty($region) || empty($access_key) || empty($secret_key) || empty($bucket_name) || empty($endpoint)) {
             return [
                 'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'),
                 'code'    => 405,
-                'success' => false
+                'success' => false,
+                'error_code' => 'insufficient_data',
             ];
         }
 
@@ -377,26 +386,11 @@ class ACOOFMF_MINIO
             $s3Client = new S3Client($credentials);
 
             /** --------------------------------------------------------
-             * STEP 2: Check if bucket exists
+             * STEP 2: Scoped bucket access check (no account-wide list)
              * -------------------------------------------------------- */
-            $buckets = $s3Client->listBuckets();
-            $bucket_found = false;
-
-            if (!empty($buckets['Buckets'])) {
-                foreach ($buckets['Buckets'] as $bucket) {
-                    if ($bucket['Name'] === $bucket_name) {
-                        $bucket_found = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!$bucket_found) {
-                return [
-                    'message' => __('Bucket Name is incorrect or not accessible.', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+            $probe = ACOOFMF_VERIFY_HELPER::probe_bucket_access($s3Client, $bucket_name, $provider_label);
+            if (empty($probe['ok'])) {
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified($probe);
             }
 
             /** --------------------------------------------------------
@@ -412,7 +406,8 @@ class ACOOFMF_MINIO
                 return [
                     'message' => __('Unable to create verification file. Check upload folder permissions.', 'offload-media-cloud-storage'),
                     'code'    => 500,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'local_fs',
                 ];
             }
 
@@ -422,12 +417,19 @@ class ACOOFMF_MINIO
             /** --------------------------------------------------------
              * STEP 4: Upload test file
              * -------------------------------------------------------- */
-            $upload = $s3Client->putObject([
-                'Bucket' => $bucket_name,
-                'Key'    => $fileName,
-                'Body'   => fopen($filePath, "r"),
-                'ACL'    => 'public-read',
-            ]);
+            try {
+                $upload = $s3Client->putObject([
+                    'Bucket' => $bucket_name,
+                    'Key'    => $fileName,
+                    'Body'   => fopen($filePath, "r"),
+                    'ACL'    => 'public-read',
+                ]);
+            } catch (Exception $e) {
+                @unlink($filePath);
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($e, 'write', $provider_label)
+                );
+            }
 
             if (empty($upload['ObjectURL']) && empty($upload['@metadata'])) {
                 @unlink($filePath);
@@ -435,7 +437,8 @@ class ACOOFMF_MINIO
                 return [
                     'message' => __('Permission issue: Unable to upload object to storage.', 'offload-media-cloud-storage'),
                     'code'    => 403,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'write_denied',
                 ];
             }
 
@@ -452,12 +455,9 @@ class ACOOFMF_MINIO
                 ]);
             } catch (Aws\S3\Exception\S3Exception $e) {
                 @unlink($filePath);
-
-                return [
-                    'message' => __('Permission issue: Unable to get object from storage.', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($e, 'read', $provider_label)
+                );
             }
 
             if (!file_exists($local_download_path)) {
@@ -466,7 +466,8 @@ class ACOOFMF_MINIO
                 return [
                     'message' => __('Read permission denied: Unable to confirm downloaded object.', 'offload-media-cloud-storage'),
                     'code'    => 403,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'read_denied',
                 ];
             }
 
@@ -483,12 +484,9 @@ class ACOOFMF_MINIO
                 ]);
             } catch (Exception $e) {
                 @unlink($filePath);
-
-                return [
-                    'message' => __('Permission issue: Unable to delete object from bucket.', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($e, 'delete', $provider_label)
+                );
             }
 
             // Cleanup local test file
@@ -500,12 +498,13 @@ class ACOOFMF_MINIO
                 return [
                     'message' => __('Object deletion failed. Please check delete permissions.', 'offload-media-cloud-storage'),
                     'code'    => 403,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'delete_denied',
                 ];
             }
 
             /** --------------------------------------------------------
-             * SUCCESS! 🎉
+             * SUCCESS
              * -------------------------------------------------------- */
             return [
                 'message' => __('Configuration for AWS/S3/MinIO verified successfully!', 'offload-media-cloud-storage'),
@@ -514,11 +513,9 @@ class ACOOFMF_MINIO
             ];
 
         } catch (Aws\S3\Exception\S3Exception $ex) {
-            return [
-                'message' => $ex->getAwsErrorMessage() ?? __('Please check authorization details.', 'offload-media-cloud-storage'),
-                'code'    => $ex->getStatusCode() ?? 405,
-                'success' => false
-            ];
+            return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                ACOOFMF_VERIFY_HELPER::classify_s3_error($ex, 'auth', $provider_label)
+            );
         }
     }
 

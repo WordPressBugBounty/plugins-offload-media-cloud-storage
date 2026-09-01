@@ -766,30 +766,9 @@ class ACOOFMF_Public
      */
     public function wp_get_attachment_url($url, $attachment_id)
     {
-        global $acoofmItem;
-        $url = preg_replace('/([^:])(\/{2,})/', '$1/', $url); // to remove double slash trapped during any operations
-        if(!$attachment_id || !$acoofmItem) {
-            return $url;
-        }
+        $new_url = ACOOFMF_URL_Rewrite_Resolver::resolve($url, $attachment_id, 'full');
 
-        if (!(
-            acoofm_is_service_enabled() &&
-            acoofm_is_rewrite_url() &&
-            $acoofmItem->is_available_from_provider($attachment_id)
-        )) {
-            return $url;
-        }
-
-        $new_url = $acoofmItem->get_url($attachment_id);
-
-
-        if (false === $new_url) {
-            return $url;
-        }
-
-        $new_url = apply_filters('acoofm_wp_get_attachment_url', $new_url, $url, $attachment_id);
-
-        return $new_url;
+        return apply_filters('acoofm_wp_get_attachment_url', $new_url, $url, $attachment_id);
     }
 
     /**
@@ -805,16 +784,8 @@ class ACOOFMF_Public
     public function wp_get_attachment_image_attributes($attr, $attachment, $size='thumbnail')
     {
         global $acoofmItem;
-        
-        if(!$attachment || !$acoofmItem) {
-            return $attr;
-        }
 
-        if (!(
-            acoofm_is_service_enabled() &&
-            acoofm_is_rewrite_url() &&
-            $acoofmItem->is_available_from_provider($attachment->ID)
-        )) {
+        if (!$attachment) {
             return $attr;
         }
 
@@ -823,17 +794,13 @@ class ACOOFMF_Public
             return $attr;
         }
 
-        $acoofm_Item = $acoofmItem->get($attachment->ID);
-
-        if (
-            isset($size) && !empty($size) &&
-            isset($attr['src']) && !empty($attr['src'])
-        ) {
-            $source = $acoofmItem->get_thumbnail_url($attachment->ID, $size);
-            if (isset($source) && !empty($source)) {
-                $attr['src'] = $source;
-            }
+        if (isset($attr['src']) && !empty($attr['src'])) {
+            $attr['src'] = ACOOFMF_URL_Rewrite_Resolver::resolve($attr['src'], $attachment->ID, $size);
         }
+
+        $acoofm_Item = ($acoofmItem && $acoofmItem->is_available_from_provider($attachment->ID))
+            ? $acoofmItem->get($attachment->ID)
+            : null;
 
         /**
          * Filtered list of attachment image attributes.
@@ -841,7 +808,7 @@ class ACOOFMF_Public
          * @param array              $attr       Attributes for the image markup.
          * @param WP_Post            $attachment Image attachment post.
          * @param string             $size       Requested size.
-         * @param ACOOFMF_ITEM        $acoofm_Item
+         * @param ACOOFMF_ITEM|null  $acoofm_Item
          */
         return apply_filters('acoofm_wp_get_attachment_image_attributes', $attr, $attachment, $size, $acoofm_Item);
     }
@@ -916,34 +883,22 @@ class ACOOFMF_Public
             return $response;
         }
 
-        // Ensure our service is enabled and attachment is available
-        if (!(
-            acoofm_is_service_enabled() &&
-            acoofm_is_rewrite_url() &&
-            $acoofmItem &&
-            $acoofmItem->is_available_from_provider($attachment->ID)
-        )) {
-            return $response;
-        }
+        $acoofm_Item = ($acoofmItem && $acoofmItem->is_available_from_provider($attachment->ID))
+            ? $acoofmItem->get($attachment->ID)
+            : null;
 
-        $acoofm_Item = $acoofmItem->get($attachment->ID);
-
-        // Replace main image URL
         if (isset($response['url'])) {
-            $source = $acoofmItem->get_url($attachment->ID);
-            if (!empty($source)) {
-                $response['url'] = $source;
-            }
+            $response['url'] = ACOOFMF_URL_Rewrite_Resolver::resolve($response['url'], $attachment->ID, 'full');
         }
 
-        // Replace each thumbnail size URL
         if (isset($response['sizes']) && is_array($response['sizes'])) {
             foreach ($response['sizes'] as $size => $details) {
                 if (!empty($details['url'])) {
-                    $source = $acoofmItem->get_thumbnail_url($attachment->ID, $size);
-                    if (!empty($source)) {
-                        $response['sizes'][$size]['url'] = $source;
-                    }
+                    $response['sizes'][$size]['url'] = ACOOFMF_URL_Rewrite_Resolver::resolve(
+                        $details['url'],
+                        $attachment->ID,
+                        $size
+                    );
                 }
             }
         }
@@ -954,7 +909,7 @@ class ACOOFMF_Public
          * @param array              $response      The prepared attachment response.
          * @param WP_Post            $attachment    Attachment object.
          * @param string             $context       Context for response.
-         * @param ACOOFMF_ITEM       $acoofm_Item   Item instance if available.
+         * @param ACOOFMF_ITEM|null  $acoofm_Item   Item instance if available.
          */
         return apply_filters('acoofmp_wp_prepare_attachment_for_js', $response, $attachment, $context, $acoofm_Item);
     }
@@ -966,45 +921,11 @@ class ACOOFMF_Public
 
     public function wp_calculate_image_srcset($sources, $size_array, $image_src, $attachment_meta, $attachment_id = 0)
     {
-        global $acoofmItem;
-
-        // Must need $attachment_id other wise not possible to get data from the table
-        if(!$attachment_id || !$acoofmItem) {
+        if (!$attachment_id) {
             return $sources;
         }
 
-        if (!(
-            acoofm_is_service_enabled() &&
-            acoofm_is_rewrite_url() &&
-            $acoofmItem->is_available_from_provider($attachment_id)
-        )) {
-            return $sources;
-        }
-
-        $item_extra = $acoofmItem->get_extras((int) $attachment_id);
-
-        if (isset($item_extra['width']) && !empty($item_extra['width'])) {
-            $sources[$item_extra['width']]=[
-                'url' => $acoofmItem->get_url((int) $attachment_id),
-                'descriptor' => 'w',
-				'value'      => $item_extra['width']
-            ];
-        }
-
-        if ($item_extra) {
-            if (isset($item_extra['sizes']) && !empty($item_extra['sizes'])) {
-                foreach ($item_extra['sizes'] as $size => $size_array) {
-                    if (isset($size_array['width']) && !empty($size_array['width'])) {
-                        $w = $size_array['width'];
-                        if (isset($sources[$w]) && !empty($sources[$w])) {
-                            $sources[$w]['url'] = $acoofmItem->get_thumbnail_url((int) $attachment_id, $size);
-                        }
-                    }
-                }
-            }
-        }
-
-        return $sources;
+        return ACOOFMF_URL_Rewrite_Resolver::resolve_srcset_sources($sources, (int) $attachment_id);
     }
 
 

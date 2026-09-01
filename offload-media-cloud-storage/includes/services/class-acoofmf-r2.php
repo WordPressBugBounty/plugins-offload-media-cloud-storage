@@ -145,19 +145,19 @@ class ACOOFMF_R2
 
         $this->config = acoofm_get_option('credentials', []);
         $this->settings = acoofm_get_option('settings', []);
-        if(isset($this->config['connection_method']) && $this->config['connection_method'] == 'wp_config') {
+        if (isset($this->config['connection_method']) && $this->config['connection_method'] == 'wp_config') {
             if (defined('ACOOFM_SETTINGS')) {
-                $settings = unserialize(ACOOFM_SETTINGS);
+                $settings = @unserialize(ACOOFM_SETTINGS);
             } else {
                 return new WP_REST_Response(array('message' => __('Settings not found in wp-config.php', 'offload-media-cloud-storage'), 'code' => 400, 'success' => false), 400);
             }
-            
-            if($settings['provider'] !== 'r2') {
+
+            if (!is_array($settings) || !isset($settings['provider']) || $settings['provider'] !== 'r2') {
                 return new WP_REST_Response(array('message' => __('Provider mismatch. Please check the credentials', 'offload-media-cloud-storage'), 'code' => 400, 'success' => false), 400);
             }
-            $this->config['account_id'] = $settings['account-id'];
-            $this->config['access_key'] = $settings['access-key-id'];
-            $this->config['secret_key'] = $settings['secret-access-key'];
+            $this->config['account_id'] = isset($settings['account-id']) ? $settings['account-id'] : '';
+            $this->config['access_key'] = isset($settings['access-key-id']) ? $settings['access-key-id'] : '';
+            $this->config['secret_key'] = isset($settings['secret-access-key']) ? $settings['secret-access-key'] : '';
         }
 
         if (
@@ -172,14 +172,16 @@ class ACOOFMF_R2
             $credentials = new Aws\Credentials\Credentials($access_key_id, $access_key_secret);
             $options = [
                 'region' => 'auto',
-                'endpoint' => "https://$account_id.r2.cloudflarestorage.com",
+                'endpoint' => "https://{$account_id}.r2.cloudflarestorage.com",
                 'version' => 'latest',
                 'credentials' => $credentials
             ];
 
             $this->acoofm_r2_client = new Aws\S3\S3Client($options);
+            $this->public_base_url = "https://{$account_id}.r2.cloudflarestorage.com";
+        } else {
+            $this->public_base_url = '';
         }
-        $this->public_base_url = "https://{$account_id}.r2.cloudflarestorage.com";
 
     }
 
@@ -338,71 +340,109 @@ class ACOOFMF_R2
      * @since 1.4.0
      */
     public function verify_keys($accountId, $accessKey, $secretKey) {
-        if (!empty($accessKey) && !empty($secretKey)) {
-            try {
-                $client = new S3Client([
-                    'version' => 'latest',
-                    'region'  => 'auto',
-                    'endpoint' => "https://{$accountId}.r2.cloudflarestorage.com",
-                    'credentials' => [
-                        'key'    => $accessKey,
-                        'secret' => $secretKey
-                    ],
-                    'use_path_style_endpoint' => false
-                ]);
-                
-                $result = $client->listBuckets();
-                $bucketNames = [];
-                $bucketDetails = [];
-                foreach ($result['Buckets'] as $bucket) {
+        if (empty($accountId)) {
+            return array('message' => __('Account ID is missing', 'offload-media-cloud-storage'), 'code' => 400, 'success' => false);
+        }
 
-                    $bucketName = $bucket['Name'];
-                    $region = 'unknown';
-                    
-                    try {
-                        $locationResult = $client->getBucketLocation([
-                            'Bucket' => $bucketName
-                        ]);
-                        
-                        $region = $locationResult['LocationConstraint'] ?: 'us-east-1';
-                        
-                    } catch (AwsException $e) {
-                        if ($e->getAwsErrorCode() === 'AuthorizationHeaderMalformed') {
-                            $errorMessage = $e->getMessage();
-                            if (preg_match('/expecting \'([a-z0-9-]+)\'/', $errorMessage, $matches)) {
-                                $region = $matches[1];
-                            }
-                        } else {
-                            // Other error
-                            $region = 'Error: ' . $e->getMessage();
-                        }
+        if (!empty($accessKey) && !empty($secretKey)) {
+            $credentials_payload = array(
+                'account_id' => $accountId,
+                'access_key' => $accessKey,
+                'secret_key' => $secretKey
+            );
+
+            try {
+                $client = $this->build_r2_client($accountId, $accessKey, $secretKey);
+
+                try {
+                    $result = $client->listBuckets();
+                } catch (Aws\S3\Exception\S3Exception $list_ex) {
+                    $classified = ACOOFMF_VERIFY_HELPER::classify_s3_error($list_ex, 'list', 'Cloudflare R2');
+
+                    // List denied: credentials may still be valid for object-level access.
+                    if ($classified['error_code'] === 'list_denied') {
+                        return ACOOFMF_VERIFY_HELPER::list_denied_success(
+                            $credentials_payload,
+                            'Cloudflare R2',
+                            __('Your R2 token cannot list buckets. Use Object Read & Write on a specific bucket and enter the bucket name manually. Admin Read is only needed for the bucket dropdown.', 'offload-media-cloud-storage')
+                        );
                     }
-                    
-                    $bucketDetails[] = [
-                        'name' => $bucketName,
-                        'region' => $region
-                    ];
-                    $bucketNames[] = $bucket['Name'];
+
+                    return ACOOFMF_VERIFY_HELPER::failure_from_classified($classified);
                 }
 
-                return array(
-                    'message' => __('Cloudflare R2 credentials are valid', 'offload-media-cloud-storage'),
-                    'code' => 200,
-                    'success' => true,
-                    'credentials' => array(
-                        'account_id' => $accountId,
-                        'access_key' => $accessKey,
-                        'secret_key' => $secretKey
-                    ),
-                    'buckets' => $bucketDetails
+                $bucketDetails = array();
+                if (!empty($result['Buckets'])) {
+                    foreach ($result['Buckets'] as $bucket) {
+                        $bucketName = $bucket['Name'];
+                        $region = 'auto';
+
+                        try {
+                            $locationResult = $client->getBucketLocation(array(
+                                'Bucket' => $bucketName
+                            ));
+                            $region = $locationResult['LocationConstraint'] ?: 'auto';
+                        } catch (AwsException $e) {
+                            if ($e->getAwsErrorCode() === 'AuthorizationHeaderMalformed') {
+                                $errorMessage = $e->getMessage();
+                                if (preg_match('/expecting \'([a-z0-9-]+)\'/', $errorMessage, $matches)) {
+                                    $region = $matches[1];
+                                }
+                            } else {
+                                $region = 'auto';
+                            }
+                        }
+
+                        $bucketDetails[] = array(
+                            'name' => $bucketName,
+                            'region' => $region
+                        );
+                    }
+                }
+
+                return ACOOFMF_VERIFY_HELPER::listed_success(
+                    $credentials_payload,
+                    $bucketDetails,
+                    __('Cloudflare R2 credentials are valid', 'offload-media-cloud-storage')
                 );
 
             } catch (Aws\S3\Exception\S3Exception $ex){
-                return array('message' => $ex->getAwsErrorMessage() ?? __('Please check the authorization details', 'offload-media-cloud-storage'), 'code' => $ex->getStatusCode() ?? 405, 'success' => false);
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($ex, 'auth', 'Cloudflare R2')
+                );
+            } catch (Exception $ex) {
+                return array(
+                    'message' => $ex->getMessage() ?: __('Please check the authorization details', 'offload-media-cloud-storage'),
+                    'code' => 405,
+                    'success' => false,
+                    'error_code' => 'unknown',
+                );
             }
         } else {
             return array('message' => __('Access key or secret key is missing', 'offload-media-cloud-storage'), 'code' => 400, 'success' => false);
         }
+    }
+
+    /**
+     * Build an S3 client configured for Cloudflare R2.
+     *
+     * @param string $account_id
+     * @param string $access_key
+     * @param string $secret_key
+     * @return S3Client
+     */
+    private function build_r2_client($account_id, $access_key, $secret_key)
+    {
+        return new S3Client(array(
+            'version' => 'latest',
+            'region'  => 'auto',
+            'endpoint' => "https://{$account_id}.r2.cloudflarestorage.com",
+            'credentials' => array(
+                'key'    => $access_key,
+                'secret' => $secret_key,
+            ),
+            'use_path_style_endpoint' => false,
+        ));
     }
 
     /**
@@ -416,7 +456,8 @@ class ACOOFMF_R2
             return [
                 'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'),
                 'code'    => 405,
-                'success' => false
+                'success' => false,
+                'error_code' => 'insufficient_data',
             ];
         }
 
@@ -424,38 +465,14 @@ class ACOOFMF_R2
             /** --------------------------------------------------------
              * STEP 1: Initialize Cloudflare R2 Client
              * -------------------------------------------------------- */
-            $credentials = new Aws\Credentials\Credentials($access_key, $secret_key);
-
-            $options = [
-                'region'      => 'auto',
-                'version'     => 'latest',
-                'endpoint'    => "https://{$account_id}.r2.cloudflarestorage.com",
-                'credentials' => $credentials
-            ];
-
-            $r2Client = new Aws\S3\S3Client($options);
+            $r2Client = $this->build_r2_client($account_id, $access_key, $secret_key);
 
             /** --------------------------------------------------------
-             * STEP 2: Check if bucket exists
+             * STEP 2: Scoped bucket access check (no account-wide list)
              * -------------------------------------------------------- */
-            $buckets = $r2Client->listBuckets();
-            $bucket_found = false;
-
-            if (!empty($buckets['Buckets'])) {
-                foreach ($buckets['Buckets'] as $bucket) {
-                    if ($bucket['Name'] === $bucket_name) {
-                        $bucket_found = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!$bucket_found) {
-                return [
-                    'message' => __('Space Name / Bucket is incorrect', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+            $probe = ACOOFMF_VERIFY_HELPER::probe_bucket_access($r2Client, $bucket_name, 'Cloudflare R2');
+            if (empty($probe['ok'])) {
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified($probe);
             }
 
             /** --------------------------------------------------------
@@ -471,7 +488,8 @@ class ACOOFMF_R2
                 return [
                     'message' => __('Unable to create verification file. Check upload folder permissions.', 'offload-media-cloud-storage'),
                     'code'    => 500,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'local_fs',
                 ];
             }
 
@@ -492,12 +510,9 @@ class ACOOFMF_R2
                 ]);
             } catch (Exception $e) {
                 @unlink($filePath);
-
-                return [
-                    'message' => __('Unable to upload object to Cloudflare R2. Check permissions.', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($e, 'write', 'Cloudflare R2')
+                );
             }
 
             if (empty($upload)) {
@@ -506,7 +521,8 @@ class ACOOFMF_R2
                 return [
                     'message' => __('Upload failed. Please check R2 policies & permissions.', 'offload-media-cloud-storage'),
                     'code'    => 403,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'write_denied',
                 ];
             }
 
@@ -523,12 +539,9 @@ class ACOOFMF_R2
                 ]);
             } catch (Exception $e) {
                 @unlink($filePath);
-
-                return [
-                    'message' => __('Unable to download test object. Read permission denied.', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($e, 'read', 'Cloudflare R2')
+                );
             }
 
             if (!file_exists($local_download_path)) {
@@ -537,7 +550,8 @@ class ACOOFMF_R2
                 return [
                     'message' => __('Downloaded file missing. Read permission problem in R2.', 'offload-media-cloud-storage'),
                     'code'    => 403,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'read_denied',
                 ];
             }
 
@@ -553,12 +567,9 @@ class ACOOFMF_R2
                 ]);
             } catch (Exception $e) {
                 @unlink($filePath);
-
-                return [
-                    'message' => __('Unable to delete object from Cloudflare R2. Check delete permissions.', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_s3_error($e, 'delete', 'Cloudflare R2')
+                );
             }
 
             if ($r2Client->doesObjectExist($bucket_name, $fileName)) {
@@ -567,7 +578,8 @@ class ACOOFMF_R2
                 return [
                     'message' => __('Delete failed. Object still exists in R2. Check permissions.', 'offload-media-cloud-storage'),
                     'code'    => 403,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'delete_denied',
                 ];
             }
 
@@ -579,7 +591,7 @@ class ACOOFMF_R2
             }
 
             /** --------------------------------------------------------
-             * SUCCESS 🎉
+             * SUCCESS
              * -------------------------------------------------------- */
             return [
                 'message' => __('Configuration for Cloudflare R2 verified successfully!', 'offload-media-cloud-storage'),
@@ -588,11 +600,9 @@ class ACOOFMF_R2
             ];
 
         } catch (Aws\S3\Exception\S3Exception $ex) {
-            return [
-                'message' => $ex->getAwsErrorMessage() ?: __('Please check the authorization details', 'offload-media-cloud-storage'),
-                'code'    => $ex->getStatusCode() ?? 405,
-                'success' => false
-            ];
+            return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                ACOOFMF_VERIFY_HELPER::classify_s3_error($ex, 'auth', 'Cloudflare R2')
+            );
         }
     }
 
@@ -688,11 +698,11 @@ class ACOOFMF_R2
                 if (filesize($media_absolute_path) <= ACOOFM_CLOUDFLARE_MULTIPART_UPLOAD_MINIMUM_SIZE) {
                     // Upload a publicly accessible file. The file size and type are determined by the SDK.
                     try {
+                        // R2 does not support object ACLs; public access is controlled via bucket/custom domain settings.
                         $upload = $this->acoofm_r2_client->putObject([
                             'Bucket' => $this->config['bucket_name'],
                             'Key'    => $upload_path,
                             'Body'   => fopen($media_absolute_path, 'r'),
-                            'ACL'    => 'public-read', // make file 'public'
                         ]);
 
                         $result = array(
@@ -713,7 +723,6 @@ class ACOOFMF_R2
                     $multiUploader = new MultipartUploader($this->acoofm_r2_client, $media_absolute_path, [
                         'bucket' => $this->config['bucket_name'],
                         'key'    => $upload_path,
-                        'acl'    => 'public-read', // make file 'public'
                     ]);
                     
                     try {

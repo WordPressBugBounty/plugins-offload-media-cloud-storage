@@ -215,30 +215,50 @@ class ACOOFMF_GOOGLE
      */
     public function verify_keys($file_path) {
         if (!empty($file_path)) {
+            $provider_label = 'Google Cloud Storage';
+            $credentials_payload = array(
+                'file_path' => $file_path,
+            );
+
             try {
+                if (!file_exists($file_path)) {
+                    return array(
+                        'message' => __('Credentials file not found at the specified path', 'offload-media-cloud-storage'),
+                        'code' => 404,
+                        'success' => false,
+                        'error_code' => 'invalid_credentials',
+                    );
+                }
+
                 $googleClient = new StorageClient([
                     'keyFilePath' => $file_path,
                 ]);
 
-                $buckets = $googleClient->buckets();
-                $bucketNames = [];
+                try {
+                    $buckets = $googleClient->buckets();
+                    $bucketNames = [];
 
-                foreach ($buckets as $bucket) {
-                    $bucketNames[] = ['name' => $bucket->name()];
+                    foreach ($buckets as $bucket) {
+                        $bucketNames[] = ['name' => $bucket->name()];
+                    }
+                } catch (Exception $list_ex) {
+                    $classified = ACOOFMF_VERIFY_HELPER::classify_google_error($list_ex, 'list');
+                    if ($classified['error_code'] === 'list_denied') {
+                        return ACOOFMF_VERIFY_HELPER::list_denied_success($credentials_payload, $provider_label);
+                    }
+                    return ACOOFMF_VERIFY_HELPER::failure_from_classified($classified);
                 }
 
-                return array(
-                    'message' => __('Google Cloud credentials are valid', 'offload-media-cloud-storage'),
-                    'code' => 200,
-                    'success' => true,
-                    'credentials' => [
-                        'file_path' => $file_path,
-                    ],
-                    'buckets' => $bucketNames
+                return ACOOFMF_VERIFY_HELPER::listed_success(
+                    $credentials_payload,
+                    $bucketNames,
+                    __('Google Cloud credentials are valid', 'offload-media-cloud-storage')
                 );
 
             } catch (Exception $ex) {
-                return array('message' => $ex->getMessage() ?? __('Please check the authorization details', 'offload-media-cloud-storage'), 'code' => $ex->getCode() ?? 405, 'success' => false);
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_google_error($ex, 'auth')
+                );
             }
         } else {
             return array('message' => __('Access key or secret key is missing', 'offload-media-cloud-storage'), 'code' => 400, 'success' => false);
@@ -345,7 +365,8 @@ class ACOOFMF_GOOGLE
             return [
                 'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'),
                 'code'    => 405,
-                'success' => false
+                'success' => false,
+                'error_code' => 'insufficient_data',
             ];
         }
 
@@ -357,12 +378,21 @@ class ACOOFMF_GOOGLE
 
             $bucket = $googleClient->bucket($bucket_name);
 
-            if (!$bucket->exists()) {
-                return [
-                    'message' => __('Bucket not found. Please check bucket name.', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+            try {
+                if (!$bucket->exists()) {
+                    return [
+                        'message' => __('Bucket not found. Please check bucket name.', 'offload-media-cloud-storage'),
+                        'code'    => 404,
+                        'success' => false,
+                        'error_code' => 'bucket_missing',
+                    ];
+                }
+            } catch (Exception $bucket_ex) {
+                $classified = ACOOFMF_VERIFY_HELPER::classify_google_error($bucket_ex, 'bucket');
+                // Soft-continue on access denied; object I/O remains authoritative.
+                if ($classified['error_code'] === 'bucket_missing' || $classified['error_code'] === 'invalid_credentials') {
+                    return ACOOFMF_VERIFY_HELPER::failure_from_classified($classified);
+                }
             }
 
             /** --------------------------------------------------------
@@ -379,7 +409,8 @@ class ACOOFMF_GOOGLE
                 return [
                     'message' => __('Unable to create verification file. Check directory permissions.', 'offload-media-cloud-storage'),
                     'code'    => 500,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'local_fs',
                 ];
             }
 
@@ -398,17 +429,25 @@ class ACOOFMF_GOOGLE
                 $options['predefinedAcl'] = 'publicRead';
             }
 
-            $upload = $bucket->upload(
-                fopen($verify_path, "r"),
-                $options
-            );
+            try {
+                $upload = $bucket->upload(
+                    fopen($verify_path, "r"),
+                    $options
+                );
+            } catch (Exception $e) {
+                @unlink($verify_path);
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_google_error($e, 'write')
+                );
+            }
 
             if (!$upload) {
                 @unlink($verify_path);
                 return [
                     'message' => __('Permission issue: Unable to upload object to Google Cloud Storage.', 'offload-media-cloud-storage'),
                     'code'    => 403,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'write_denied',
                 ];
             }
 
@@ -423,7 +462,8 @@ class ACOOFMF_GOOGLE
                 return [
                     'message' => __('Permission issue: Unable to verify object in GCS bucket.', 'offload-media-cloud-storage'),
                     'code'    => 403,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'write_denied',
                 ];
             }
 
@@ -437,12 +477,9 @@ class ACOOFMF_GOOGLE
                 $object->downloadToFile($download_path);
             } catch (Exception $e) {
                 @unlink($verify_path);
-
-                return [
-                    'message' => __('Unable to download object. Check read permissions.', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_google_error($e, 'read')
+                );
             }
 
             if (!file_exists($download_path)) {
@@ -451,7 +488,8 @@ class ACOOFMF_GOOGLE
                 return [
                     'message' => __('User does not have permission to read the object from GCS.', 'offload-media-cloud-storage'),
                     'code'    => 403,
-                    'success' => false
+                    'success' => false,
+                    'error_code' => 'read_denied',
                 ];
             }
 
@@ -466,12 +504,9 @@ class ACOOFMF_GOOGLE
                 $object->delete();
             } catch (Exception $e) {
                 @unlink($verify_path);
-
-                return [
-                    'message' => __('Unable to delete object. Check delete permissions.', 'offload-media-cloud-storage'),
-                    'code'    => 403,
-                    'success' => false
-                ];
+                return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                    ACOOFMF_VERIFY_HELPER::classify_google_error($e, 'delete')
+                );
             }
 
             // Final cleanup of local verification file
@@ -480,7 +515,7 @@ class ACOOFMF_GOOGLE
             }
 
             /** --------------------------------------------------------
-             * ALL GOOD ✔
+             * ALL GOOD
              * -------------------------------------------------------- */
             return [
                 'message' => __('Configuration for Google Cloud Storage verified successfully!', 'offload-media-cloud-storage'),
@@ -489,11 +524,9 @@ class ACOOFMF_GOOGLE
             ];
 
         } catch (Exception $ex) {
-            return [
-                'message' => $ex->getMessage(),
-                'code'    => $ex->getCode() ?: 405,
-                'success' => false
-            ];
+            return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                ACOOFMF_VERIFY_HELPER::classify_google_error($ex, 'auth')
+            );
         }
     }
 

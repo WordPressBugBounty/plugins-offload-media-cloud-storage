@@ -340,7 +340,7 @@ class ACOOFMF_Api
                             isset($credentials['bucket_name']) && !empty($credentials['bucket_name'])
                         ) {
                             $result = $acoofmS3->verify($credentials['access_key'], $credentials['secret_key'], $credentials['region'], $credentials['bucket_name']);
-                            return new WP_REST_Response(array('message' => $result['message'], 'code' => $result['code']));
+                            return new WP_REST_Response(ACOOFMF_VERIFY_HELPER::service_connect_response($result));
                         } else {
                             return new WP_REST_Response(array('message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'), 'code' => 405));
                         }
@@ -352,7 +352,7 @@ class ACOOFMF_Api
                             isset($credentials['bucket_name']) && !empty($credentials['bucket_name'])
                         ) {
                             $result = $acoofmGoogle->verify($credentials['file_path'], $credentials['bucket_name']);
-                            return new WP_REST_Response(array('message' => $result['message'], 'code' => $result['code']));
+                            return new WP_REST_Response(ACOOFMF_VERIFY_HELPER::service_connect_response($result));
                         } else {
                             return new WP_REST_Response(array('message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'), 'code' => 405));
                         }
@@ -366,7 +366,7 @@ class ACOOFMF_Api
                             isset($credentials['bucket_name']) && !empty($credentials['bucket_name'])
                         ) {
                             $result = $acoofmOcean->verify($credentials['access_key'], $credentials['secret_key'], $credentials['region'], $credentials['bucket_name']);
-                            return new WP_REST_Response(array('message' => $result['message'], 'code' => $result['code']));
+                            return new WP_REST_Response(ACOOFMF_VERIFY_HELPER::service_connect_response($result));
                         } else {
                             return new WP_REST_Response(array('message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'), 'code' => 405));
                         }
@@ -380,7 +380,7 @@ class ACOOFMF_Api
                             isset($credentials['bucket_name']) && !empty($credentials['bucket_name'])
                         ) {
                             $result = $acoofmr2->verify($credentials['access_key'], $credentials['secret_key'], $credentials['account_id'], $credentials['bucket_name']);
-                            return new WP_REST_Response(array('message' => $result['message'], 'code' => $result['code']));
+                            return new WP_REST_Response(ACOOFMF_VERIFY_HELPER::service_connect_response($result));
                         } else {
                             return new WP_REST_Response(array('message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'), 'code' => 405));
                         }
@@ -393,7 +393,7 @@ class ACOOFMF_Api
                             isset($credentials['endpoint']) && !empty($credentials['endpoint'])
                         ) {
                             $result = $acoofmMinio->verify($credentials['access_key'], $credentials['secret_key'], $credentials['endpoint'], $credentials['bucket_name'], $credentials['region']);
-                            return new WP_REST_Response(array('message' => $result['message'], 'code' => $result['code']));
+                            return new WP_REST_Response(ACOOFMF_VERIFY_HELPER::service_connect_response($result));
                         } else {
                             return new WP_REST_Response(array('message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'), 'code' => 405));
                         }

@@ -565,6 +565,12 @@ if (!function_exists('acoofm_clear_cache')) {
 
         update_option( ACOOFM_STORED_DATA_VERSION, time(), true );
 
+        delete_transient( 'acoofmf_cdn_base_urls' );
+
+        if ( class_exists( 'ACOOFMF_URL_Rewrite_Resolver' ) ) {
+            ACOOFMF_URL_Rewrite_Resolver::clear_request_cache();
+        }
+
         /**
          * Compatibility for pro version to clear sync activity
          * @since 1.1.9

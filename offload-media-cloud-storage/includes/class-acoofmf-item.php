@@ -190,6 +190,9 @@ class ACOOFMF_ITEM
             $data['id'] = $item_id;
             acoofm_set_cache($source_id, $data, $source_id);
             add_post_meta((int) $source_id, ACOOFM_ATTACHMENT_META_KEY, $item_id);
+            if ( class_exists( 'ACOOFMF_URL_Rewrite_Resolver' ) ) {
+                ACOOFMF_URL_Rewrite_Resolver::invalidate_attachment( $source_id );
+            }
         }
 
         return $item_id;
@@ -501,20 +504,15 @@ class ACOOFMF_ITEM
                             } elseif (isset($acoofmProService) && is_object($acoofmProService) && method_exists($acoofmProService, 'get_presigned_url')) {
                                 $service = $acoofmProService;
                             }
-                            // $result = false;
-                            // if ($service) {
-                            //     $result = $service->get_presigned_url($thumb['path']);
-                            // }
 
                             $result = array();
-                            $savedPUrl = $this->acoofm_get_saved_presigned_url($source_id, 'full');
+                            $savedPUrl = $this->acoofm_get_saved_presigned_url($source_id, $size);
                             $force = apply_filters('acoofm_force_to_change_presigned_url', false);
-                            // delete_post_meta( $source_id, 'acoofm_presigned_urls' );
 
                             if ($service && (!$savedPUrl || $force)) {
-                                $result = $service->get_presigned_url($data['path']);
-                                $saved = $this->acoofm_update_presigned_url($result['file_url'], $source_id, 'full');
-                            }else if (!empty($savedPUrl)){
+                                $result = $service->get_presigned_url($thumb['path']);
+                                $this->acoofm_update_presigned_url($result['file_url'], $source_id, $size);
+                            } else if (!empty($savedPUrl)) {
                                 $result['success'] = true;
                                 $result['file_url'] = $savedPUrl;
                                 $result['code'] = 200;
@@ -556,20 +554,15 @@ class ACOOFMF_ITEM
                             } elseif (isset($acoofmProService) && is_object($acoofmProService) && method_exists($acoofmProService, 'get_presigned_url')) {
                                 $service = $acoofmProService;
                             }
-                            // $result = false;
-                            // if ($service) {
-                            //     $result = $service->get_presigned_url($original['key']);
-                            // }
 
                             $result = array();
-                            $savedPUrl = $this->acoofm_get_saved_presigned_url($source_id, 'full');
+                            $savedPUrl = $this->acoofm_get_saved_presigned_url($source_id, 'original');
                             $force = apply_filters('acoofm_force_to_change_presigned_url', false);
-                            // delete_post_meta( $source_id, 'acoofm_presigned_urls' );
 
                             if ($service && (!$savedPUrl || $force)) {
-                                $result = $service->get_presigned_url($data['path']);
-                                $saved = $this->acoofm_update_presigned_url($result['file_url'], $source_id, 'full');
-                            }else if (!empty($savedPUrl)){
+                                $result = $service->get_presigned_url($original['key']);
+                                $this->acoofm_update_presigned_url($result['file_url'], $source_id, 'original');
+                            } else if (!empty($savedPUrl)) {
                                 $result['success'] = true;
                                 $result['file_url'] = $savedPUrl;
                                 $result['code'] = 200;
@@ -617,6 +610,9 @@ class ACOOFMF_ITEM
             }
 
             acoofm_delete_cache($source_id, $source_id);
+            if ( class_exists( 'ACOOFMF_URL_Rewrite_Resolver' ) ) {
+                ACOOFMF_URL_Rewrite_Resolver::invalidate_attachment( $source_id );
+            }
             $current_data = $this->get($source_id);
             return true;
         }
@@ -652,6 +648,9 @@ class ACOOFMF_ITEM
                 return false;
             }
             acoofm_delete_cache($source_id, $source_id);
+            if ( class_exists( 'ACOOFMF_URL_Rewrite_Resolver' ) ) {
+                ACOOFMF_URL_Rewrite_Resolver::invalidate_attachment( $source_id );
+            }
             delete_post_meta($source_id, ACOOFM_ATTACHMENT_META_KEY);
             return true;
         }
