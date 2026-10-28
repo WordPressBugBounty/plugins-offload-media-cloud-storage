@@ -157,7 +157,8 @@ class ACOOFMF_MINIO
         ) {
             $credentials = [
                 'version'     => '2006-03-01',
-                'region'      => 'us-east-1',
+                // Same region verify() checked with (servers with MINIO_REGION reject others).
+                'region'      => $this->config['region'],
                 'use_accelerate_endpoint' => isset($this->config['transfer_accilaration'])
                                                 ? $this->config['transfer_accilaration'] : false,
                 'use_aws_shared_config_files' => false,
@@ -170,7 +171,7 @@ class ACOOFMF_MINIO
             ];
 
             $credentials = apply_filters('acoofm_minio_client_credentials', $credentials, $this->config);      
-            $this->acoofm_S3_Client = new S3Client($credentials);
+            $this->acoofm_S3_Client = new S3Client(acoofm_s3_client_args($credentials));
         }
     }
 
@@ -203,7 +204,7 @@ class ACOOFMF_MINIO
                     'endpoint' => $endpoint, // Custom endpoint for MinIO
                 ];
                 $credentials = apply_filters('acoofm_minio_client_credentials', $credentials, $this->config);
-                $s3 = new S3Client($credentials);
+                $s3 = new S3Client(acoofm_s3_client_args($credentials));
 
                 try {
                     $result = $s3->listBuckets();
@@ -381,9 +382,9 @@ class ACOOFMF_MINIO
                 'endpoint'                    => $endpoint, // Custom S3-compatible endpoint
             ];
 
-            $credentials = apply_filters('acoofm_s3_client_credentials', $credentials, $this->config);
+            $credentials = apply_filters('acoofm_minio_client_credentials', $credentials, $this->config);
 
-            $s3Client = new S3Client($credentials);
+            $s3Client = new S3Client(acoofm_s3_client_args($credentials));
 
             /** --------------------------------------------------------
              * STEP 2: Scoped bucket access check (no account-wide list)
@@ -632,22 +633,12 @@ class ACOOFMF_MINIO
                         );
                     }
                 } else {
-                    $multiUploader = new MultipartUploader($this->acoofm_S3_Client, $media_absolute_path, [
-                        'bucket'    => $this->config['bucket_name'],
-                        'key'       => $upload_path,
-                        'acl'       => 'public-read', // make file 'public'
-                    ]);
-                    
                     try {
-                        do {
-                            try {
-                                $uploaded = $multiUploader->upload();
-                            } catch (MultipartUploadException $e) {
-                                $multiUploader = new MultipartUploader($this->acoofm_S3_Client, $media_absolute_path, [
-                                    'state' => $e->getState(),
-                                ]);
-                            }
-                        } while (!isset($uploaded));
+                        $uploaded = acoofm_multipart_upload($this->acoofm_S3_Client, $media_absolute_path, [
+                            'bucket'    => $this->config['bucket_name'],
+                            'key'       => $upload_path,
+                            'acl'       => 'public-read', // make file 'public'
+                        ]);
 
                         if (isset($uploaded['ObjectURL']) && !empty($uploaded['ObjectURL'])) {
                             $result = array(
@@ -776,7 +767,7 @@ class ACOOFMF_MINIO
                     'Key'    => $key
                 ]);
 
-                $expires = isset($this->settings['presigned_expire']) ? $this->settings['presigned_expire'] : 20;
+                $expires = acoofm_get_presigned_expire_minutes($this->settings, 10080); // SigV4 maximum: 7 days
 
                 $request = $this->acoofm_S3_Client->createPresignedRequest($cmd, sprintf('+%s  minutes', $expires));
 

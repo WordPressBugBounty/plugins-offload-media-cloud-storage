@@ -1,159 +1,127 @@
-=== Offload Media - Cloud Storage  ===
+=== Offload Media - Cloud Storage ===
 Author: Acowebs
 Author URI: https://acowebs.com
 Contributors: acowebs, salmanharis
 Donate link: https://acowebs.com
-Tags: media, offload, cloud, CDN, performance
+Tags: offload media, amazon s3, google cloud storage, cloudflare r2, cdn
 License: GPLv2 or later
-Requires at least: 5.6
-Requires PHP: 7.2
-Tested up to: 7.0
-Stable tag: 1.8.3
+Requires at least: 6.0
+Requires PHP: 7.4
+Tested up to: 7.1.3
+Stable tag: 1.9.0
 
-Offload Media moves your WordPress files to cloud storage (AWS S3, DigitalOcean, Cloudflare R2, Google Cloud) to improve site performance.
+Offload WordPress media to Amazon S3, Google Cloud Storage, Cloudflare R2 or DigitalOcean Spaces and serve it from the cloud or your CDN.
 
 == Description ==
 
-Offload- Media Cloud Storage is an innovative plugin for WordPress. It will dramatically transform how you interact with media in WordPress and increase the website's performance. Media Cloud Storage is a way to transfer your files, media, and images from a WordPress server to online cloud storage, such as Amazon S3, DigitalOcean Spaces, Cloudflare R2, and Google Cloud Storage Services. And it rewrites the URL to serve files from the same storage provider or another CDN provider.
+**Offload Media - Cloud Storage** copies the files you upload to the WordPress Media Library to cloud storage and serves them from there. Images, videos, PDFs and other attachments load from your Amazon S3, Google Cloud Storage, Cloudflare R2 or DigitalOcean Spaces bucket, or from a CDN in front of it.
 
-== HOW TO MANAGE SETTINGS? ==
+Serving media from the cloud takes load and disk usage off your web server, and a CDN delivers files from locations closer to your visitors, which can help page speed.
 
-To manage settings in the Offload Media Cloud Storage, download and activate the WordPress plugin.
-Go to the Offload media menu in the left menu bar of WordPress, where you can manage the settings. The settings include configure and Settings.
-Configure settings allow you to set up the basic plugin settings, while Settings help for the customization of the media upload and serving strategies.
+= Supported cloud storage providers =
 
+* **Amazon S3** (including buckets with ACLs disabled)
+* **Google Cloud Storage** (including buckets with uniform bucket-level access)
+* **Cloudflare R2**
+* **DigitalOcean Spaces**
 
-== <Offload Media - Cloud Storage> Basic Features ==
-It improves your website speed. Your website will load more efficiently if the cloud media is being transferred to cloud servers.  It can make your website faster because it reduces server requests.
-The plugin you have installed no longer needs to serve the media contents like images, videos, pdfs, ZIPs, PDFs as well as other files that you uploaded to the server.
+= Features =
 
-Here are the features of the Offload Media - Cloud Storage:
+* **Automatic offloading:** new Media Library uploads are copied to your bucket, including every generated image size and the original image.
+* **URL rewriting:** media URLs in posts, pages, image srcsets and the block editor point to the cloud. Post content keeps local URLs in the database, so your content stays intact if you turn the plugin off.
+* **CDN support:** serve files through a custom CDN or endpoint URL, such as Amazon CloudFront or a Cloudflare domain.
+* **Pre-signed URLs:** serve files through expiring, signed URLs with a configurable lifetime.
+* **Save disk space:** optionally remove local copies once files are in the cloud.
+* **Folder structure:** set a base path and keep WordPress year/month folders.
+* **Object versioning:** add a unique prefix to file paths to avoid stale CDN caches (Amazon S3, Google Cloud Storage, DigitalOcean Spaces).
+* **Stays in sync:** edited images and regenerated thumbnails are offloaded again, and deleting media also removes it from your bucket.
+* **Reliable background uploads:** offloading runs in a queue with automatic retries, so busy uploads and temporary provider errors do not leave files behind.
+* **Guided setup:** a configuration wizard verifies your credentials, can create a new bucket, and lets you keep access keys in wp-config.php.
+* **Offload details:** the attachment details screen shows each file's provider, region and access.
+* Works with WooCommerce product images and other themes and plugins that use the standard WordPress media functions.
+* Translation-ready.
 
-🔹 Sync your media to Amazon s3, Google Cloud Storage, Cloudflare R2 or Digital Ocean Spaces.
-🔹 Delete files from the server once it is uploaded to the server.
-🔹 Customizable base path of server storage.
-🔹 Customizable URL structure.
-🔹 Object versioning can be created for avoiding invalidations of media.
-🔹 Custom CDN can be used for media URLs.
-🔹 Pre-signed URLs can be created.
-🔹 Woocommerce Support
-🔹 Advanced Custom Fields Support
-🔹 RTL Support
-🔹 Fully compatible with all Acowebs plugins
-🔹 WPML string Translations support
+= Pro version =
 
-== Offload Media - Cloud Storage Pro Features ==
+[Offload Media - Cloud Storage Pro](https://acowebs.com/offload-media-cloud-storage/) adds:
 
-Upgrade to the Pro version of Offload Media - Cloud Storage to unlock advanced automation, storage providers, bulk actions, and deep media optimizations:
+* **More providers:** Wasabi, MinIO and other S3-compatible storage.
+* **Bulk tools:** offload your existing Media Library, remove local copies, or download files back to your server in bulk.
+* **Media Library tools:** an offload status column and per-file actions to sync, remove or download files.
+* **Image optimization:** image compression with original backups, and WebP generation, offloading and delivery.
+* **WooCommerce:** WooCommerce downloadable product files served from your bucket.
+* **Troubleshooting tools:** connection, media and delivery checks, cache clearing, and import of data from earlier versions.
 
-🔹 **Expanded Cloud Provider Support:**
-* Native integration for Wasabi and MinIO.
-* Support for custom S3-compatible cloud storage services.
-* Support for Google Cloud Storage Uniform Bucket-Level Access.
+= Useful links =
 
-🔹 **Media Library Status & Manual Actions:**
-* **Offload Status Column:** View offload statuses (Stored on Server, Offloaded, Deleted from Server) directly in your Media Library list with sorting support.
-* **Inline Actions:** Manual actions on the attachment details panel to Sync to Cloud, Remove from Cloud, Delete from Server, or Download back to Server.
+* [Documentation](https://acowebs.com/guideline/plugin-docs-faqs/offload-media/)
+* [Support](https://wordpress.org/support/plugin/offload-media-cloud-storage/)
+* [Upgrade to Pro](https://acowebs.com/offload-media-cloud-storage/)
+* [Other Acowebs plugins](https://profiles.wordpress.org/acowebs/#content-plugins)
 
-🔹 **Automated Bulk Operations:**
-* Bulk offload all existing WordPress media to your cloud bucket.
-* Bulk delete local copies of offloaded media files to instantly reclaim server disk space.
-* Bulk download media assets from the cloud back to your web server.
+== Installation ==
 
-🔹 **Image & WebP Optimization:**
-* **Image Compression:** Compress images (lossy or lossless).
-* **WebP Generation & Compression:** Automatically generate WebP versions of images, compress them, and offload them to the cloud.
-* **WebP Cloud Sync:** Rewrite URLs to serve WebP files automatically when supported.
-* **Original Backup Management:** Back up original images during compression, with bulk offloading, deletion, and recovery actions.
+1. In your WordPress dashboard, go to **Plugins > Add New**, search for "Offload Media - Cloud Storage", then install and activate it. You can also upload the ZIP file under **Plugins > Add New > Upload Plugin**.
+2. Open **Offload Media** in the admin menu and choose your cloud storage provider.
+3. Enter your access keys (or a Google Cloud service account key file), or define them in wp-config.php.
+4. Choose an existing bucket or create a new one, then save once the credentials are verified.
+5. Review the settings: copying files to the bucket, URL rewriting, CDN, pre-signed URLs and removing local files.
 
-🔹 **Advanced Integrations:**
-* **WooCommerce Support:** Seamless handling and offloading of WooCommerce product files and digital downloads.
-* **Advanced Custom Fields (ACF):** Offloads media referenced within ACF custom fields.
-* **WPML Translation Support:** Full compatibility with multilingual WordPress setups and translation workflows.
-
-🔹 **Maintenance & Troubleshooting:**
-* **Import Previous Data:** Easily migrate settings and media metadata from older versions.
-* **Cache Management:** Clear plugin cache and transients related to cloud assets.
-* **Data Cleanup:** Complete option to reset and purge stored data, cached paths, database records, and offloaded media metadata.
-
-== Why Acowebs? ==
-Acowebs has established the foundation by providing the experience and expertise to activate WooCommerce stores using compact and highly-performing WooCommerce plugins as well as Shopify applications. We develop top-quality themes and WordPress in the cloud to provide comprehensive solutions that are brimming with unparalleled UX features. Being an award-winning software company, and a part of Acodez, the globally recognized and multiple-award-winning digital agency, our team and support features assure you the best.
-
-Check out our other WordPress plugins [here](https://profiles.wordpress.org/acowebs/#content-plugins).
-
-== OTHER USEFUL LINKS ==
-
-🔹 [Upgrade to Pro](https://acowebs.com/offload-media-cloud-storage/)
-🔹 [Documentation](https://acowebs.com/guideline/plugin-docs-faqs/offload-media/)
-🔹 [Find Our Other Plugins](https://acowebs.com/woocommerce-plugins/)
-🔹 [Support Ticket](https://wordpress.org/support/plugin/offload-media-cloud-storage/#new-topic-0)
-🔹 [Facebook](https://www.facebook.com/acowebs)
-🔹 [Twitter](https://twitter.com/acowebs)
-🔹 [YouTube](https://www.youtube.com/channel/UCXoOjbKiXjDocNMe8qd3WHw)
-
-
-
-== INSTALLATION ==
-
-Installation of "Offload Media - Cloud Storage" can be done either by searching for "Offload Media - Cloud Storage" via the "Plugins > Add New" screen in your WordPress dashboard, or by using the following steps:
-
-1. Download the plugin via WordPress.org
-1. Upload the ZIP file through the 'Plugins > Add New > Upload' screen in your WordPress dashboard
-1. Activate the plugin through the 'Plugins' menu in WordPress
+New uploads are offloaded from then on.
 
 == Screenshots ==
 
-1. Welcome to offload media
-2. Choose Cloud Service
-3. Service Welcome Page
-4. Configure Service Credentials
-5. Verifying Service Credentials
-6. Save configuration after successful verification
+1. Welcome screen
+2. Choose a cloud storage provider
+3. Provider setup overview
+4. Enter cloud storage credentials
+5. Credential verification
+6. Save the configuration after successful verification
 7. Dashboard
-8. Settings Page
-9. Uploaded Attachment Details
+8. Settings for uploads, URL rewriting, CDN and pre-signed URLs
+9. Offload details of an uploaded attachment
 
 == Frequently Asked Questions ==
 
-= What is WordPress media offloading and how does it improve SEO? =
-WordPress media offloading is the process of automatically copying your media files (images, PDFs, videos, and audio) to a secure cloud storage provider and rewriting their URLs so they are served directly from the cloud or a Content Delivery Network (CDN). 
+= What does offloading WordPress media do? =
+It copies the files you upload to the Media Library to a cloud storage bucket and rewrites their URLs, so visitors load them from the cloud or your CDN instead of your web server. This reduces server load and, if you remove local copies, disk usage.
 
-Offloading media dramatically reduces the load on your web server, speeds up page loading times, and saves server disk space. Since Google uses page speed as a ranking factor, faster loading times directly translate to improved search engine optimization (SEO) and a better user experience.
+= Which cloud storage providers are supported? =
+Amazon S3, Google Cloud Storage, Cloudflare R2 and DigitalOcean Spaces. The Pro version adds Wasabi, MinIO and other S3-compatible storage.
 
-= Which cloud storage providers are supported in the free version? =
-The free version of Offload Media - Cloud Storage natively supports:
-* Amazon S3 (AWS)
-* Google Cloud Storage (GCS)
-* Cloudflare R2
-* DigitalOcean Spaces
+= Are existing Media Library files offloaded? =
+The free version offloads new uploads, along with edited images and regenerated thumbnails. To offload media uploaded before the plugin was installed, use the bulk offload tool in the Pro version.
 
-If you need support for Wasabi, MinIO, or custom S3-compatible storage services, you can upgrade to the Pro version.
+= Can I serve media through a CDN such as CloudFront or Cloudflare? =
+Yes. Enable "CDN / Custom End Point" in the settings and enter your CDN URL. Media URLs then use that domain.
 
-= Can I serve offloaded media files via a custom CDN? =
-Yes! Both the free and Pro versions allow you to configure a Custom CDN / Custom Endpoint URL (such as Cloudflare, Amazon CloudFront, KeyCDN, or Bunny CDN) to serve your offloaded media. This ensures that your assets are delivered from the edge server closest to your site visitors, resulting in lightning-fast response times.
+= Can I delete local files after they are offloaded? =
+Yes. Enable "Remove files from server" and local copies are deleted once their upload to the bucket is confirmed. Before turning off the plugin, make sure the files are available on your server again, because WordPress will then serve them locally.
 
-= Does the plugin delete local media library files after uploading them to the cloud? =
-Yes, you can enable the "Remove files from server" option in the settings. Once enabled, the plugin will automatically delete the local copy of an image or file from your WordPress server after it has been successfully offloaded to your cloud storage bucket. This is an excellent way to host large media libraries on affordable, small-storage web servers.
+= What happens if I deactivate the plugin? =
+Post content is saved with local URLs, so pages keep working and your media is served from your server again. Files stay in your bucket. If you removed local copies, download them back to your server first.
 
-= Are private files supported using secure pre-signed URLs? =
-Yes! You can enable the "Enable Pre-signed URL" feature. This generates secure, temporary, and expiring URLs for private files or digital assets, protecting your content from unauthorized sharing. You can customize the URL expiration time (in minutes) directly in the settings dashboard.
+= Do my files need to be public? =
+Files are served by their public URL unless you enable pre-signed URLs, which give each file a signed link that expires after the time you set. On Amazon S3 buckets with ACLs disabled and Google Cloud buckets with uniform bucket-level access, grant public read access through the bucket policy or IAM, or use pre-signed URLs.
 
-= Is this plugin compatible with WooCommerce and Advanced Custom Fields (ACF)? =
-Yes! Offload Media is built to be fully compatible with WooCommerce, Advanced Custom Fields (ACF), and WPML. It handles rewriting URLs for WooCommerce product pages and ACF custom image/file fields, ensuring that translation workflows and e-commerce transactions run smoothly.
+= Where should I store my access keys? =
+You can enter them in the setup wizard, or define them in wp-config.php so they are not stored in the database. For Google Cloud Storage, wp-config.php holds the path to your service account key file. The wizard shows the code to add.
 
-= Why should I upgrade to Offload Media - Cloud Storage Pro? =
-The Pro version unlocks advanced optimization and automation capabilities for growing websites:
-* **Additional Providers:** Support for Wasabi, MinIO, and custom S3-compatible endpoints.
-* **Bulk Tools:** Bulk sync all historical media items, bulk download assets back to the server, and bulk delete local files via a safe background worker.
-* **Advanced Media Library UI:** Adds an "Offload Status" column with sorting, plus manual sync, download, and delete actions in the attachment details panel.
-* **Image Optimization & WebP:** Compress images, automatically generate and compress WebP versions, sync them to the cloud, and dynamically rewrite URLs to serve WebP files.
-* **Google Cloud Uniform Bucket Access:** Dedicated support for uniform access permissions.
+= Does it work with WooCommerce? =
+Yes. WooCommerce product images use the standard WordPress media functions, so they are offloaded and served from the cloud like other media. The Pro version also serves WooCommerce downloadable product files from your bucket.
 
 == Upgrade Notice ==
-= 1.8.3 =
-* Fix PHP fatal when rewriting image URLs in the block editor
+= 1.9.0 =
+* More reliable offloading, Google Cloud uniform bucket support and security improvements.
 
 == Changelog ==
+= 1.9.0 =
+* WordPress 7.1 compatibility
+* Reliable background offloading with automatic retries
+* Block editor uploads use cloud URLs
+* Google Cloud uniform bucket and S3 ACL-disabled bucket support
+* Security improvements
+* Bug fixes
 = 1.8.3 =
 * Fix PHP fatal when rewriting image URLs in the block editor REST API
 = 1.8.2 =

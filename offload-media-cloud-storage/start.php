@@ -1,13 +1,13 @@
 <?php
 /**
  * Plugin Name: Offload Media - Cloud Storage
- * Version: 1.8.3
+ * Version: 1.9.0
  * Description: Offload Media - Cloud Storage helps to offload your WordPress media to cloud storage services.
  * Author: Acowebs
  * Author URI: https://acowebs.com
- * Requires at least: 5.6
- * Requires PHP: 7.2
- * Tested up to: 7.0
+ * Requires at least: 6.0
+ * Requires PHP: 7.4
+ * Tested up to: 7.1.3
  * Text Domain: offload-media-cloud-storage
  */
 
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 global $wpdb;
 
 define('ACOOFM_TOKEN', 'acoofm');
-define('ACOOFM_VERSION', '1.8.3');
+define('ACOOFM_VERSION', '1.9.0');
 define('ACOOFM_FILE', __FILE__);
 define('ACOOFM_PLUGIN_NAME', 'Offload Media - Cloud Storage');
 
@@ -40,6 +40,9 @@ define('ACOOFM_ITEM_POOL_OPTION_KEY', ACOOFM_TOKEN.'_common_item_pool_data');
 define('ACOOFM_ITEM_POOL_META_KEY', ACOOFM_TOKEN.'_item_pool_data');
 define('ACOOFM_STORED_DATA_VERSION', ACOOFM_TOKEN.'_stored_data_version');
 define('ACOOFM_CACHE_EXPIRY', 24*60*60);
+
+// Shown in the admin instead of stored secrets; never saved over them.
+define('ACOOFM_SECRET_PLACEHOLDER', '••••••••••••••••');
 
 require_once realpath(plugin_dir_path(__FILE__)) . DIRECTORY_SEPARATOR . 'includes/helpers.php';
 
@@ -142,6 +145,9 @@ if (!function_exists('ACOOFMF_Public')) {
         return ACOOFMF_Public::instance(__FILE__);
     }
 }
+
+// Here rather than in ACOOFMF_Backend, so it also runs for WP-CLI deactivation.
+register_deactivation_hook(__FILE__, array('ACOOFMF_Offload_Queue', 'unschedule'));
 
 ACOOFMF_Public();
 if (is_admin()) {

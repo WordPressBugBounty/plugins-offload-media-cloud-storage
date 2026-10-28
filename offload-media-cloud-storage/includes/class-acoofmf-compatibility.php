@@ -172,6 +172,10 @@ class ACOOFMF_COMPATIBILITY {
 
 		check_ajax_referer( 'get_media_provider_details', '_nonce' );
 
+        if ( ! current_user_can( 'upload_files' ) ) {
+            wp_send_json_success( $result );
+        }
+
 		$id= intval( sanitize_text_field( $_POST['id'] ) );
         global $acoofmItem;
 

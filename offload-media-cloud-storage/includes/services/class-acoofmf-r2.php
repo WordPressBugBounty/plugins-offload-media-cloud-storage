@@ -177,7 +177,7 @@ class ACOOFMF_R2
                 'credentials' => $credentials
             ];
 
-            $this->acoofm_r2_client = new Aws\S3\S3Client($options);
+            $this->acoofm_r2_client = new Aws\S3\S3Client(acoofm_s3_client_args($options));
             $this->public_base_url = "https://{$account_id}.r2.cloudflarestorage.com";
         } else {
             $this->public_base_url = '';
@@ -215,19 +215,22 @@ class ACOOFMF_R2
             // Set up credentials and client options
             $credentials = new \Aws\Credentials\Credentials($access_key, $secret_key);
             $options = [
-                'region' => $region,
+                // R2 signs with region "auto"; a location is a hint given when creating the bucket.
+                'region' => 'auto',
                 'endpoint' => "https://{$account_id}.r2.cloudflarestorage.com",
                 'version' => 'latest',
                 'credentials' => $credentials
             ];
-            
+
             // Create S3 client
-            $r2Client = new \Aws\S3\S3Client($options);
-            
+            $r2Client = new \Aws\S3\S3Client(acoofm_s3_client_args($options));
+
             // Create the bucket
-            $result = $r2Client->createBucket([
-                'Bucket' => $bucket_name,
-            ]);
+            $create_args = ['Bucket' => $bucket_name];
+            if (in_array($region, ['wnam', 'enam', 'weur', 'eeur', 'apac', 'oc'], true)) {
+                $create_args['CreateBucketConfiguration'] = ['LocationConstraint' => $region];
+            }
+            $result = $r2Client->createBucket($create_args);
             
             // Wait until the bucket is created
             $r2Client->waitUntil('BucketExists', [
@@ -240,7 +243,7 @@ class ACOOFMF_R2
                     [
                         'AllowedHeaders' => ['*'],
                         'AllowedMethods' => ['GET', 'HEAD', 'PUT', 'POST', 'DELETE'],
-                        'AllowedOrigins' => [$_SERVER['HTTP_ORIGIN']],
+                        'AllowedOrigins' => [!empty($_SERVER['HTTP_ORIGIN']) ? esc_url_raw(wp_unslash($_SERVER['HTTP_ORIGIN'])) : untrailingslashit(home_url())],
                         'ExposeHeaders' => ['ETag', 'Content-Length', 'Content-Type'],
                         'MaxAgeSeconds' => 86400 // 24 hours
                     ]
@@ -252,22 +255,28 @@ class ACOOFMF_R2
                 'CORSConfiguration' => $corsConfiguration
             ]);
 
-            // Enable public access via Cloudflare API
-            $cfApiUrl = "https://api.cloudflare.com/client/v4/accounts/{$account_id}/r2/buckets/{$bucket_name}/domains/managed";
-            $cfApiHeaders = [
-                'Authorization: Bearer ' . $api_token,
-                'Content-Type: application/json',
-            ];
-            $cfApiData = json_encode(['enabled' => true]);
+            // Public access (r2.dev domain) needs a Cloudflare API token.
+            if (empty($api_token)) {
+                return [
+                    'message' => __('Bucket created. Enable public access for it in the Cloudflare dashboard, or provide an API token.', 'offload-media-cloud-storage'),
+                    'code' => 200,
+                    'success' => true
+                ];
+            }
 
-            $ch = curl_init($cfApiUrl);
-            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $cfApiHeaders);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $cfApiData);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            $cfApiResponse = curl_exec($ch);
-            $cfApiHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
+            // Enable public access via Cloudflare API
+            $cfApiUrl = "https://api.cloudflare.com/client/v4/accounts/" . rawurlencode($account_id) . "/r2/buckets/" . rawurlencode($bucket_name) . "/domains/managed";
+            $cfApiResponse = wp_remote_request($cfApiUrl, [
+                'method'  => 'PUT',
+                'timeout' => 30,
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $api_token,
+                    'Content-Type'  => 'application/json',
+                ],
+                'body'    => wp_json_encode(['enabled' => true]),
+            ]);
+            $cfApiHttpCode = is_wp_error($cfApiResponse) ? 0 : (int) wp_remote_retrieve_response_code($cfApiResponse);
+            $cfApiResponse = is_wp_error($cfApiResponse) ? '' : wp_remote_retrieve_body($cfApiResponse);
 
             if ($cfApiHttpCode !== 200) {
                 return [
@@ -433,7 +442,7 @@ class ACOOFMF_R2
      */
     private function build_r2_client($account_id, $access_key, $secret_key)
     {
-        return new S3Client(array(
+        return new S3Client(acoofm_s3_client_args(array(
             'version' => 'latest',
             'region'  => 'auto',
             'endpoint' => "https://{$account_id}.r2.cloudflarestorage.com",
@@ -442,7 +451,7 @@ class ACOOFMF_R2
                 'secret' => $secret_key,
             ),
             'use_path_style_endpoint' => false,
-        ));
+        )));
     }
 
     /**
@@ -720,32 +729,19 @@ class ACOOFMF_R2
                         );
                     }
                 } else {
-                    $multiUploader = new MultipartUploader($this->acoofm_r2_client, $media_absolute_path, [
-                        'bucket' => $this->config['bucket_name'],
-                        'key'    => $upload_path,
-                    ]);
-                    
                     try {
-                        do {
-                            try {
-                                $uploaded = $multiUploader->upload();
-                            } catch (MultipartUploadException $e) {
-                                $multiUploader = new MultipartUploader($this->acoofm_r2_client, $media_absolute_path, [
-                                    'state' => $e->getState(),
-                                ]);
-                            }
-                        } while (!isset($uploaded));
+                        $uploaded = acoofm_multipart_upload($this->acoofm_r2_client, $media_absolute_path, [
+                            'bucket' => $this->config['bucket_name'],
+                            'key'    => $upload_path,
+                        ]);
                         if (isset($uploaded['ObjectURL']) && !empty($uploaded['ObjectURL'])) {
-                            // Build your clean URL
-                            $baseUrl = rtrim($this->public_base_url, '/');
-                            $key     = ltrim($upload_path, '/');
-
-                            $url = $baseUrl . '/' . $key;
+                            // Same URL form as a single putObject (the account endpoint alone has no bucket).
+                            $url = $this->acoofm_r2_client->getObjectUrl($this->config['bucket_name'], $upload_path);
 
                             $result = array(
                                 'success' => true,
                                 'code'    => 200,
-                                'file_url' => urldecode($url),
+                                'file_url' => $url,
                                 'key'     => $upload_path,
                                 'Message' => __('File Uploaded Successfully', 'offload-media-cloud-storage')
                             );
@@ -863,7 +859,7 @@ class ACOOFMF_R2
                     'Key'    => $key
                 ]);
 
-                $expires = isset($this->settings['presigned_expire']) ? $this->settings['presigned_expire'] : 20;
+                $expires = acoofm_get_presigned_expire_minutes($this->settings, 10080); // SigV4 maximum: 7 days
 
                 $request = $this->acoofm_r2_client->createPresignedRequest($cmd, sprintf('+%s  minutes', $expires));
 

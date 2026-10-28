@@ -164,7 +164,7 @@ class ACOOFMF_DIGITALOCEAN
             isset($this->config['access_key']) && !empty($this->config['access_key']) &&
             isset($this->config['secret_key']) && !empty($this->config['secret_key'])
         ) {
-            $this->acoofm_ocean_client = new S3Client([
+            $this->acoofm_ocean_client = new S3Client(acoofm_s3_client_args([
                 'version'                       => '2006-03-01',
                 'region'                        => 'us-east-1',
                 'endpoint'                      => 'https://'.$this->config['region'].'.digitaloceanspaces.com',
@@ -173,7 +173,7 @@ class ACOOFMF_DIGITALOCEAN
                                     'key'       => $this->config['access_key'],
                                     'secret'    => $this->config['secret_key'],
                 ],
-            ]);
+            ]));
         }
 
         if (!empty($this->config['bucket_name'])) {
@@ -210,7 +210,7 @@ class ACOOFMF_DIGITALOCEAN
             isset($bucket_name) && !empty($bucket_name)
         ) {
             try {
-                $s3Client = new S3Client([
+                $s3Client = new S3Client(acoofm_s3_client_args([
                     'version'                       => '2006-03-01',
                     'region'                        => $region,
                     'endpoint'                      => 'https://'.$region.'.digitaloceanspaces.com',
@@ -219,7 +219,7 @@ class ACOOFMF_DIGITALOCEAN
                                         'key'       => $access_key,
                                         'secret'    => $secret_key,
                     ],
-                ]);
+                ]));
 
                 // Create the bucket
                 $result = $s3Client->createBucket([
@@ -284,13 +284,15 @@ class ACOOFMF_DIGITALOCEAN
             );
 
             try {
-                $regions = ['nyc3', 'sfo2', 'sgp1', 'ams3', 'fra1']; // All DigitalOcean Spaces regions
+                // Same regions as the configuration screen offers.
+                $regions = ['nyc3', 'sfo2', 'sfo3', 'sgp1', 'ams3', 'fra1', 'blr1', 'lon1', 'syd1'];
                 $bucketDetails = [];
                 $list_denied = false;
                 $seen_buckets = array();
+                $unreachable = array();
 
                 foreach ($regions as $region) {
-                    $client = new S3Client([
+                    $client = new S3Client(acoofm_s3_client_args([
                         'version' => 'latest',
                         'region'  => $region,
                         'endpoint' => 'https://'.$region.'.digitaloceanspaces.com',
@@ -299,7 +301,7 @@ class ACOOFMF_DIGITALOCEAN
                             'secret' => $secretKey
                         ],
                         'use_path_style_endpoint' => false
-                    ]);
+                    ]));
 
                     try {
                         $result = $client->listBuckets();
@@ -310,6 +312,15 @@ class ACOOFMF_DIGITALOCEAN
                             continue;
                         }
                         return ACOOFMF_VERIFY_HELPER::failure_from_classified($classified);
+                    } catch (AwsException $network_ex) {
+                        // One region unreachable (no AWS error code) must not fail the others.
+                        if (!$network_ex->getAwsErrorCode()) {
+                            $unreachable[] = $network_ex;
+                            continue;
+                        }
+                        return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                            ACOOFMF_VERIFY_HELPER::classify_s3_error($network_ex, 'list', $provider_label)
+                        );
                     }
 
                     foreach ($result['Buckets'] as $bucket) {
@@ -323,6 +334,13 @@ class ACOOFMF_DIGITALOCEAN
                             'region' => $region
                         ];
                     }
+                }
+
+                // No region reachable at all: a network problem, not valid credentials.
+                if (count($unreachable) === count($regions)) {
+                    return ACOOFMF_VERIFY_HELPER::failure_from_classified(
+                        ACOOFMF_VERIFY_HELPER::classify_s3_error(end($unreachable), 'auth', $provider_label)
+                    );
                 }
 
                 if (!empty($bucketDetails)) {
@@ -375,7 +393,7 @@ class ACOOFMF_DIGITALOCEAN
         }
 
         try {
-            $oceanClient = new S3Client([
+            $oceanClient = new S3Client(acoofm_s3_client_args([
                 'version'                     => '2006-03-01',
                 'region'                      => 'us-east-1', // DO uses this fixed region for auth
                 'endpoint'                    => 'https://' . $region . '.digitaloceanspaces.com',
@@ -384,7 +402,7 @@ class ACOOFMF_DIGITALOCEAN
                     'key'    => $access_key,
                     'secret' => $secret_key,
                 ],
-            ]);
+            ]));
 
             /** ---------------------------------------------------
              * STEP 1: Scoped space access check (no account-wide list)
@@ -627,22 +645,12 @@ class ACOOFMF_DIGITALOCEAN
                         );
                     }
                 } else {
-                    $multiUploader = new MultipartUploader($this->acoofm_ocean_client, $media_absolute_path, [
-                        'bucket' => $this->config['bucket_name'],
-                        'key'    => $upload_path,
-                        'acl'    => 'public-read', // make file 'public'
-                    ]);
-                    
                     try {
-                        do {
-                            try {
-                                $uploaded = $multiUploader->upload();
-                            } catch (MultipartUploadException $e) {
-                                $multiUploader = new MultipartUploader($this->acoofm_ocean_client, $media_absolute_path, [
-                                    'state' => $e->getState(),
-                                ]);
-                            }
-                        } while (!isset($uploaded));
+                        $uploaded = acoofm_multipart_upload($this->acoofm_ocean_client, $media_absolute_path, [
+                            'bucket' => $this->config['bucket_name'],
+                            'key'    => $upload_path,
+                            'acl'    => 'public-read', // make file 'public'
+                        ]);
                         if (isset($uploaded['ObjectURL']) && !empty($uploaded['ObjectURL'])) {
                             // Build your clean URL
                             $baseUrl = rtrim($this->public_base_url, '/');
@@ -772,7 +780,7 @@ class ACOOFMF_DIGITALOCEAN
                     'Key'    => $key
                 ]);
 
-                $expires = isset($this->settings['presigned_expire']) ? $this->settings['presigned_expire'] : 20;
+                $expires = acoofm_get_presigned_expire_minutes($this->settings, 10080); // SigV4 maximum: 7 days
 
                 $request = $this->acoofm_ocean_client->createPresignedRequest($cmd, sprintf('+%s  minutes', $expires));
 

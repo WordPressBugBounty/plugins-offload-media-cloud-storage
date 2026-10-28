@@ -162,7 +162,172 @@ class ACOOFMF_REWRITEURL {
             add_filter('wp_content_img_tag', array($this, 'acoofmf_custom_modify_img_tag'), 10, 3);
             add_filter('rest_prepare_post', array($this, 'acoofmf_rest_prepare_page'), 10, 3);
             add_filter('rest_prepare_page', array($this, 'acoofmf_rest_prepare_page'), 10, 3);
+            // The editor gets cloud URLs above; they must not be saved into the post.
+            add_filter('wp_insert_post_data', array($this, 'acoofmf_restore_local_content_urls'), 10, 1);
         }
+    }
+
+    /**
+     * Turn cloud image URLs back into local upload URLs before a post is saved.
+     *
+     * acoofmf_rest_prepare_page() shows the editor cloud (possibly presigned,
+     * expiring) URLs. Saved as they are, posts would keep them after offloading
+     * is turned off or the provider changes. Only <img> tags with a
+     * wp-image-{ID} class, and block "url" attributes next to an "id" (e.g.
+     * core/cover), whose file name belongs to that attachment are changed.
+     *
+     * @param array $data Slashed post data.
+     * @return array
+     */
+    public function acoofmf_restore_local_content_urls($data) {
+        if (
+            empty($data['post_content']) || !is_string($data['post_content']) ||
+            (false === strpos($data['post_content'], 'wp-image-') && false === strpos($data['post_content'], '"url":'))
+        ) {
+            return $data;
+        }
+
+        $content = wp_unslash($data['post_content']);
+        $upload_dir = wp_get_upload_dir();
+        $base_url = trailingslashit($upload_dir['baseurl']);
+
+        $restored = preg_replace_callback(
+            '/<img[^>]+class="[^"]*wp-image-(\d+)[^"]*"[^>]*>/',
+            function ($matches) use ($base_url) {
+                $img_tag       = $matches[0];
+                $attachment_id = (int) $matches[1];
+
+                if (!preg_match('/src="([^"]*)"/', $img_tag, $src_match)) {
+                    return $img_tag;
+                }
+                $src = html_entity_decode($src_match[1]);
+                // Already local (or relative).
+                if (0 === strpos($src, $base_url) || 0 === strpos($src, '/')) {
+                    return $img_tag;
+                }
+
+                $local_url = self::get_local_url_for_file($attachment_id, wp_basename((string) wp_parse_url($src, PHP_URL_PATH)), $base_url);
+                if (!$local_url) {
+                    return $img_tag;
+                }
+
+                $new_img_tag = preg_replace('/src="[^"]*"/', 'src="' . esc_url($local_url) . '"', $img_tag, 1);
+                return (null === $new_img_tag) ? $img_tag : $new_img_tag;
+            },
+            $content
+        );
+        if (null === $restored) {
+            $restored = $content;
+        }
+
+        $restored = self::rewrite_block_url_attributes(
+            $restored,
+            function ($url, $attachment_id) use ($base_url) {
+                // Already local (or relative).
+                if (0 === strpos($url, $base_url) || 0 === strpos($url, '/')) {
+                    return false;
+                }
+
+                return self::get_local_url_for_file($attachment_id, wp_basename((string) wp_parse_url($url, PHP_URL_PATH)), $base_url);
+            }
+        );
+
+        if ($restored !== $content) {
+            $data['post_content'] = wp_slash($restored);
+        }
+
+        return $data;
+    }
+
+    /**
+     * Rewrite the "url" attribute of blocks that also name their attachment ("id").
+     *
+     * Blocks such as core/cover keep the image URL in the block comment as well
+     * as in the <img> tag, and build their markup from the attribute, so the two
+     * must change together. Only the url value is replaced; the other attributes
+     * keep their stored encoding.
+     *
+     * @param string   $content  Post content.
+     * @param callable $callback Receives the URL and attachment ID; returns the new URL, or false to keep it.
+     * @return string
+     */
+    private static function rewrite_block_url_attributes($content, $callback) {
+        if (!is_string($content) || false === strpos($content, '<!-- wp:') || false === strpos($content, '"url":')) {
+            return $content;
+        }
+
+        // Block opener as matched by WP_Block_Parser.
+        $rewritten = preg_replace_callback(
+            '/(<!--\s+wp:(?:[a-z][a-z0-9_-]*\/)?[a-z][a-z0-9_-]*\s+)({(?:(?:[^}]+|}+(?=})|(?!}\s+\/?-->).)*+)?})(\s+\/?-->)/s',
+            function ($matches) use ($callback) {
+                $attrs = json_decode($matches[2], true);
+                if (
+                    !is_array($attrs) ||
+                    empty($attrs['id']) || !is_numeric($attrs['id']) ||
+                    empty($attrs['url']) || !is_string($attrs['url'])
+                ) {
+                    return $matches[0];
+                }
+
+                $new_url = call_user_func($callback, $attrs['url'], (int) $attrs['id']);
+                if (!is_string($new_url) || '' === $new_url || $new_url === $attrs['url']) {
+                    return $matches[0];
+                }
+
+                // Encoded the way the editor stores attributes (serialize_block_attributes()).
+                $old_pair = substr(serialize_block_attributes(array('url' => $attrs['url'])), 1, -1);
+                $new_pair = substr(serialize_block_attributes(array('url' => $new_url)), 1, -1);
+                if (false === strpos($matches[2], $old_pair)) {
+                    return $matches[0];
+                }
+
+                return $matches[1] . str_replace($old_pair, $new_pair, $matches[2]) . $matches[3];
+            },
+            $content
+        );
+
+        return (null === $rewritten) ? $content : $rewritten;
+    }
+
+    /**
+     * Local upload URL of an attachment file (main, original or a size), by file name.
+     *
+     * @param int    $attachment_id Attachment ID.
+     * @param string $file_name     File name from the cloud URL.
+     * @param string $base_url      Uploads base URL with trailing slash.
+     * @return string|false
+     */
+    private static function get_local_url_for_file($attachment_id, $file_name, $base_url) {
+        if ($file_name === '') {
+            return false;
+        }
+
+        $attached_file = get_post_meta($attachment_id, '_wp_attached_file', true);
+        if (empty($attached_file) || !is_string($attached_file)) {
+            return false;
+        }
+
+        $files = array(wp_basename($attached_file));
+        $meta = wp_get_attachment_metadata($attachment_id);
+        if (is_array($meta)) {
+            if (!empty($meta['original_image'])) {
+                $files[] = $meta['original_image'];
+            }
+            if (!empty($meta['sizes']) && is_array($meta['sizes'])) {
+                foreach ($meta['sizes'] as $size_data) {
+                    if (!empty($size_data['file'])) {
+                        $files[] = $size_data['file'];
+                    }
+                }
+            }
+        }
+
+        if (!in_array($file_name, $files, true)) {
+            return false;
+        }
+
+        $dir = dirname($attached_file);
+        return $base_url . (($dir === '.' || $dir === '') ? '' : trailingslashit($dir)) . $file_name;
     }
 
     /**
@@ -198,6 +363,10 @@ class ACOOFMF_REWRITEURL {
             return $filtered_image;
         }
 
+        if ( empty( $attachment_id ) ) {
+            return $filtered_image;
+        }
+
         libxml_use_internal_errors(true);
         $doc = new DOMDocument();
         $doc->loadHTML('<meta http-equiv="Content-Type" content="text/html; charset=utf-8">' . $filtered_image);
@@ -222,6 +391,10 @@ class ACOOFMF_REWRITEURL {
         }
 
         $body = $doc->getElementsByTagName('body')->item(0);
+        if ( ! $body ) {
+            return $filtered_image;
+        }
+
         $filtered_html = '';
         foreach ($body->childNodes as $child) {
             $filtered_html .= $doc->saveHTML($child);
@@ -273,6 +446,21 @@ class ACOOFMF_REWRITEURL {
         if (!is_string($content) || $content === '') {
             return $content;
         }
+
+        // Keep block "url" attributes in step with the <img> tags rewritten below.
+        $base_url = trailingslashit(wp_get_upload_dir()['baseurl']);
+        $content  = self::rewrite_block_url_attributes(
+            $content,
+            function ($url, $attachment_id) use ($base_url) {
+                $path = (string) wp_parse_url($url, PHP_URL_PATH);
+                if (!self::get_local_url_for_file($attachment_id, wp_basename($path), $base_url)) {
+                    return false;
+                }
+
+                $size = self::acoofm_get_size_from_src($path, $attachment_id);
+                return ACOOFMF_URL_Rewrite_Resolver::resolve($url, $attachment_id, $size === false ? 'full' : $size);
+            }
+        );
 
         return preg_replace_callback(
             '/<img[^>]+class="[^"]*wp-image-(\d+)[^"]*"[^>]*>/',

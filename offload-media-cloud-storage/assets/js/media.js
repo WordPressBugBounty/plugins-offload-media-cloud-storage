@@ -10,7 +10,14 @@ jQuery(function ($) {
 			MediaView.Attachment.Details.TwoColumn =
 				AttachmentDetailColumn.extend({
 					render: function () {
+						// Render the standard details right away; a failed
+						// request must not leave the pane empty.
+						AttachmentDetailColumn.prototype.render.apply(
+							this,
+							arguments
+						);
 						this.fetchProviderDetails(this.model.get('id'));
+						return this;
 					},
 
 					fetchProviderDetails: function (id) {
@@ -21,61 +28,57 @@ jQuery(function ($) {
 									id: id,
 								},
 							})
-							.done(_.bind(this.renderView, this));
+							.done(_.bind(this.renderServerDetails, this));
 					},
 
-					renderView: function (response) {
-						// Render parent media.view.Attachment.Details
-						AttachmentDetailColumn.prototype.render.apply(this);
-
-						this.renderServerDetails(response);
+					// One "<strong>label</strong>value" row, as text (no HTML from the response).
+					detailRow: function (className, label, value) {
+						return $('<div>')
+							.addClass(className)
+							.append($('<strong>').text(label))
+							.append(document.createTextNode(value));
 					},
 
 					renderServerDetails: function (response) {
-						if (response.status) {
-							var $detailsHtml = this.$el.find('.details');
-							var data = response.data;
-							var append = [];
-							if (data.provider) {
-								var providerHtml =
-									"<div class='acoofm_provider'><strong>" +
-										window.acoofm_media_object.strings
-											.provider +
-										'</strong>' +
-										data.provider.label ||
-									data.provider.slug + '</div>';
-								append.push(providerHtml);
-							}
-							if (data.region) {
-								var regionHtml =
-									"<div class='acoofm_region'><strong>" +
-									window.acoofm_media_object.strings.region +
-									'</strong>' +
-									data.region +
-									'</div>';
-								append.push(regionHtml);
-							}
-
-							var accessString = data.private
-								? window.acoofm_media_object.strings
-										.access_private
-								: window.acoofm_media_object.strings
-										.access_public;
-							var accessHtml =
-								"<div class='acoofm_access'><strong>" +
-								window.acoofm_media_object.strings.access +
-								'</strong>' +
-								accessString +
-								'</div>';
-
-							append.push(accessHtml);
-
-							if (append.length) {
-								append.forEach((element, key) => {
-									$detailsHtml.append(element);
-								});
-							}
+						if (!response || !response.status) {
+							return;
 						}
+						var strings = window.acoofm_media_object.strings;
+						var $detailsHtml = this.$el.find('.details');
+						var data = response.data;
+
+						// Remove rows of an earlier response before adding new ones.
+						$detailsHtml
+							.find('.acoofm_provider, .acoofm_region, .acoofm_access')
+							.remove();
+
+						if (data.provider) {
+							$detailsHtml.append(
+								this.detailRow(
+									'acoofm_provider',
+									strings.provider,
+									data.provider.label || data.provider.slug
+								)
+							);
+						}
+						if (data.region) {
+							$detailsHtml.append(
+								this.detailRow(
+									'acoofm_region',
+									strings.region,
+									data.region
+								)
+							);
+						}
+						$detailsHtml.append(
+							this.detailRow(
+								'acoofm_access',
+								strings.access,
+								data.private
+									? strings.access_private
+									: strings.access_public
+							)
+						);
 					},
 				});
 		}

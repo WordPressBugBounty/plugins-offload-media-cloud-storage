@@ -88,6 +88,8 @@ class ACOOFMF_Api
             }
         } elseif ($connection_method === 'define_constants') {
             $credentials = $request->get_param('credentials') ? $request->get_param('credentials') : array('access_key' => '', 'secret_key' => '');
+            $restored_secrets = $this->get_secret_placeholders($credentials);
+            $credentials = acoofm_unmask_credentials($credentials);
             $account_id = isset($credentials['account_id']) ? $credentials['account_id'] : '';
             $endpoint = isset($credentials['endpoint']) ? $credentials['endpoint'] : '';
             if (!empty($credentials) && isset($credentials['access_key']) && isset($credentials['secret_key'])) {
@@ -102,12 +104,23 @@ class ACOOFMF_Api
             if (empty($file_path)) {
                 return new WP_REST_Response(array('message' => __('File path not provided.', 'offload-media-cloud-storage'), 'code' => 400, 'success' => false), 400);
             }
+            if (!acoofm_is_allowed_key_file_path($file_path)) {
+                return new WP_REST_Response(array('message' => __('Invalid key file. Please upload the file again.', 'offload-media-cloud-storage'), 'code' => 400, 'success' => false), 400);
+            }
         } else {
             return new WP_REST_Response(array('message' => __('Invalid connection method.', 'offload-media-cloud-storage'), 'code' => 400, 'success' => false), 400);
         }
 
         if (($provider && $access_key && $secret_key) || ($provider && $file_path)) {
             $result = $this->verify_provider_credentials($provider, $access_key, $secret_key, $account_id, $file_path, $endpoint);
+            // Do not echo a stored secret back: keep the placeholder the browser sent.
+            if (!empty($restored_secrets) && is_array($result) && isset($result['credentials']) && is_array($result['credentials'])) {
+                foreach ($restored_secrets as $field) {
+                    if (isset($result['credentials'][$field])) {
+                        $result['credentials'][$field] = ACOOFM_SECRET_PLACEHOLDER;
+                    }
+                }
+            }
             if (is_array($result) && $result['success']) {
                 return new WP_REST_Response(array('message' => $result['message'], 'code' => 200, 'success' => true, 'result' => $result), 200);
             } else {
@@ -120,7 +133,7 @@ class ACOOFMF_Api
 
     public function createBucket($request){
         $service = $request->get_param('service');
-        $credentials = $request->get_param('credentials');
+        $credentials = acoofm_unmask_credentials($request->get_param('credentials'));
 
         if(!empty($service) && isset($credentials)){
             switch ($service) {
@@ -182,6 +195,9 @@ class ACOOFMF_Api
                     $bucket_name = isset($credentials['bucket_name']) ? $credentials['bucket_name'] : '';
                     $region = isset($credentials['region']) ? $credentials['region'] : '';
                     if(!empty($file_path) && !empty($bucket_name) && !empty($region)){
+                        if (!acoofm_is_allowed_key_file_path($file_path)) {
+                            return new WP_REST_Response(array('message' => __('Invalid key file. Please upload the file again.', 'offload-media-cloud-storage'), 'code' => 400, 'success' => false), 400);
+                        }
                         $acoofmGoogle = new ACOOFMF_GOOGLE;
                         $result = $acoofmGoogle->create_bucket($file_path, $bucket_name, $region);
                         if($result['success']){
@@ -284,7 +300,7 @@ class ACOOFMF_Api
             ],
             'configure' => [
                 'service' => acoofm_get_option('service', []),
-                'credentials' => acoofm_get_option('credentials', []),
+                'credentials' => acoofm_mask_credentials(acoofm_get_option('credentials', [])),
             ],
             'settings' => acoofm_get_option('settings', []),
         );
@@ -308,8 +324,8 @@ class ACOOFMF_Api
                 if (isset($configure['service']) && !empty($configure['service'])) {
                     acoofm_update_option('service', $configure['service']);
                 }
-                if ($configure['credentials'] && !empty($configure['credentials'])) {
-                    acoofm_update_option('credentials', $configure['credentials']);
+                if (isset($configure['credentials']) && !empty($configure['credentials'])) {
+                    acoofm_update_option('credentials', acoofm_unmask_credentials($configure['credentials']));
                 }
             }
         }
@@ -323,7 +339,7 @@ class ACOOFMF_Api
     public function serviceConnect($request)
     {
         $service = $request->get_param('service');
-        $credentials = $request->get_param('credentials');
+        $credentials = acoofm_unmask_credentials($request->get_param('credentials'));
 
         if (
             isset($service) && !empty($service) &&
@@ -351,6 +367,9 @@ class ACOOFMF_Api
                             isset($credentials['file_path']) && !empty($credentials['file_path']) &&
                             isset($credentials['bucket_name']) && !empty($credentials['bucket_name'])
                         ) {
+                            if (!acoofm_is_allowed_key_file_path($credentials['file_path'])) {
+                                return new WP_REST_Response(array('message' => __('Invalid key file. Please upload the file again.', 'offload-media-cloud-storage'), 'code' => 400));
+                            }
                             $result = $acoofmGoogle->verify($credentials['file_path'], $credentials['bucket_name']);
                             return new WP_REST_Response(ACOOFMF_VERIFY_HELPER::service_connect_response($result));
                         } else {
@@ -416,11 +435,17 @@ class ACOOFMF_Api
     public function serviceSave($request)
     {
         $service = $request->get_param('service');
-        $credentials = $request->get_param('credentials');
+        $credentials = acoofm_unmask_credentials($request->get_param('credentials'));
         $settings = $request->get_param('settings');
 
         $current_service = acoofm_get_service('slug');
         $current_bucket_name = acoofm_get_credentials('bucket_name');
+        if (
+            isset($credentials['file_path']) && !empty($credentials['file_path']) &&
+            !acoofm_is_allowed_key_file_path($credentials['file_path'])
+        ) {
+            return new WP_REST_Response(array('message' => __('Invalid key file. Please upload the file again.', 'offload-media-cloud-storage'), 'previousService' => false), 400);
+        }
         if (
             isset($service) && !empty($service) &&
             isset($credentials) && !empty($credentials) &&
@@ -433,8 +458,9 @@ class ACOOFMF_Api
                 ) {
                     if (acoofm_update_option('credentials', $credentials)) {
                         acoofm_reset_attachement_meta_key($service['slug']);
-                        return new WP_REST_Response(array('message' => __('Configuration Saved', 'offload-media-cloud-storage'), 'previousService' => true), 200);
                         acoofm_clear_cache();
+                        $this->retry_failed_offloads();
+                        return new WP_REST_Response(array('message' => __('Configuration Saved', 'offload-media-cloud-storage'), 'previousService' => true), 200);
                     } else {
                         return new WP_REST_Response(array('message' => __('Something went wrong', 'offload-media-cloud-storage'), 'previousService' => false), 403);
                     }
@@ -445,6 +471,7 @@ class ACOOFMF_Api
                 ) {
                     acoofm_reset_attachement_meta_key($service['slug']);
                     acoofm_clear_cache();
+                    $this->retry_failed_offloads();
                     return new WP_REST_Response(array('message' => __('Configuration Saved', 'offload-media-cloud-storage'), 'previousService' => false), 200);
                 } else {
                     return new WP_REST_Response(array('message' => __('Something went wrong', 'offload-media-cloud-storage'), 'previousService' => false), 403);
@@ -479,6 +506,8 @@ class ACOOFMF_Api
 
             if (acoofm_update_option('settings', $settings)) {
                 acoofm_clear_cache();
+                // e.g. a file type that was not enabled for offload is now allowed
+                $this->retry_failed_offloads();
                 return new WP_REST_Response(__('Settings updated', 'offload-media-cloud-storage'), 200);
             } else {
                 return new WP_REST_Response(__('Something went wrong', 'offload-media-cloud-storage'), 403);
@@ -516,7 +545,10 @@ class ACOOFMF_Api
         if (isset($_FILES['file']) && !empty($_FILES['file'])) {
             $config_file = $_FILES['file'];
             if (isset($config_file['type']) && $config_file['type'] == 'application/json') {
-                if (file_exists($config_file["tmp_name"])) {
+                if (isset($config_file['tmp_name']) && file_exists($config_file["tmp_name"])) {
+                    if (!acoofm_is_google_credentials_file($config_file['tmp_name'])) {
+                        return new WP_REST_Response(__('Invalid file. Please upload the Google Cloud service account key (JSON) file', 'offload-media-cloud-storage'), 415);
+                    }
 
                     add_filter( 'upload_dir', array($this, 'change_file_upload_dir'));
                     add_filter( 'mime_types', array($this, 'add_custom_mime_type_json'));
@@ -537,16 +569,24 @@ class ACOOFMF_Api
                     remove_filter( 'mime_types', array($this, 'add_custom_mime_type_json'));
 
                     if ($movefile && !isset($movefile['error'])) {
+                        // Store under an unguessable name; the directory is not protected on every server.
+                        $key_file_path = acoofm_generate_key_file_path();
+                        if (!@rename($movefile['file'], $key_file_path)) {
+                            wp_delete_file($movefile['file']);
+                            return new WP_REST_Response(__('Unable to store the file. Please check the uploads directory permissions', 'offload-media-cloud-storage'), 500);
+                        }
+
                         $result     = array(
                             'success' => true,
-                            'file_path' => $movefile['file'],
-                            'file_name' => basename($movefile['file']),
+                            'file_path' => $key_file_path,
+                            'file_name' => sanitize_file_name($config_file['name']),
                         );
                         return new WP_REST_Response($result, 200);
                     } else {
                         return new WP_REST_Response($movefile['error'], 415);
                     }
                 }
+                return new WP_REST_Response(__('Insufficient data. Please try again', 'offload-media-cloud-storage'), 405);
             } else {
                 return new WP_REST_Response(__('Invalid file format', 'offload-media-cloud-storage'), 415);
             }
@@ -562,12 +602,8 @@ class ACOOFMF_Api
      */
     public function change_file_upload_dir($upload) {
         // $upload_dir = wp_get_upload_dir();
-        $path   = $upload['basedir'] . '/' . ACOOFM_UPLOADS;
-        $url    = $upload['baseurl'] . '/' . ACOOFM_UPLOADS;
-
-        if (!is_dir($path)) {
-            mkdir($path);
-        }   
+        // Create the directory with its access protection (also on sites where it was never activated).
+        acoofm_protect_key_file_dir($upload['basedir'] . '/' . ACOOFM_UPLOADS);
 
         $upload['subdir'] = '/' . ACOOFM_UPLOADS;
         $upload['path'] = $upload['basedir'] . '/' . ACOOFM_UPLOADS;
@@ -606,11 +642,48 @@ class ACOOFMF_Api
     }
 
     /**
+     * Secret fields of a request that hold the placeholder for a stored secret
+     *
+     * @param array $credentials Credentials from the request
+     * @return string[]
+     */
+    private function get_secret_placeholders($credentials)
+    {
+        $fields = array();
+        if (is_array($credentials)) {
+            foreach (array('secret_key', 'api_token') as $field) {
+                if (isset($credentials[$field]) && $credentials[$field] === ACOOFM_SECRET_PLACEHOLDER) {
+                    $fields[] = $field;
+                }
+            }
+        }
+        return $fields;
+    }
+
+    /**
+     * Give offloads that ran out of attempts another chance after the
+     * configuration changed (credentials, bucket or allowed file types).
+     *
+     * @return void
+     */
+    private function retry_failed_offloads()
+    {
+        if (acoofm_is_service_enabled() && acoofm_is_copy_to_server()) {
+            $queue = new ACOOFMF_Offload_Queue();
+            if ($queue->reset_permanently_failed()) {
+                $queue->ensure_cron();
+            }
+        }
+    }
+
+    /**
      * Permission Callback
      **/
     public function getPermission()
     {
-        if (current_user_can('administrator')) {
+        // Same capability as the admin page. On multisite every site admin has
+        // it; networks can require more (e.g. manage_network_options) here.
+        if (current_user_can(apply_filters('acoofm_rest_capability', 'manage_options'))) {
             return true;
         } else {
             return false;

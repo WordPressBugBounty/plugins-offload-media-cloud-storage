@@ -47,8 +47,12 @@ class ACOOFMF_URL_Rewrite_Resolver {
         }
 
         $original_url = preg_replace( '/([^:])(\/{2,})/', '$1/', $url );
-        $post_id      = $attachment_id ? (int) $attachment_id : (int) attachment_url_to_postid( $original_url );
+        $post_id      = (int) $attachment_id;
 
+        // Never call attachment_url_to_postid() here. Block templates run every
+        // product <img> through this resolver, and WooCommerce thumbnails usually
+        // have no wp-image-{id} class. That WP helper scans postmeta and will
+        // stall or kill shop/archive pages with many images.
         if ( ! $post_id || ! self::should_rewrite( $post_id ) ) {
             return $original_url;
         }
@@ -109,13 +113,21 @@ class ACOOFMF_URL_Rewrite_Resolver {
 
         $context         = self::get_attachment_context( $attachment_id );
         $width_to_size   = self::build_width_to_size_map( $context, $attachment_id );
+        $file_to_size    = self::build_file_to_size_map( $attachment_id );
 
         foreach ( $sources as $width => $source ) {
             if ( empty( $source['url'] ) || ! is_string( $source['url'] ) ) {
                 continue;
             }
 
-            $size = isset( $width_to_size[ (int) $width ] ) ? $width_to_size[ (int) $width ] : 'full';
+            // The file name identifies the size exactly; two sizes can share a
+            // width (e.g. medium 300x200 and a 300x300 crop).
+            $file = wp_basename( (string) wp_parse_url( $source['url'], PHP_URL_PATH ) );
+            if ( isset( $file_to_size[ $file ] ) ) {
+                $size = $file_to_size[ $file ];
+            } else {
+                $size = isset( $width_to_size[ (int) $width ] ) ? $width_to_size[ (int) $width ] : 'full';
+            }
             $sources[ $width ]['url'] = self::resolve( $source['url'], $attachment_id, $size );
         }
 
@@ -376,6 +388,33 @@ class ACOOFMF_URL_Rewrite_Resolver {
         self::$local_exists_cache[ $cache_key ] = $exists;
 
         return $exists;
+    }
+
+    /**
+     * Map attachment file names to size slugs from WP metadata.
+     *
+     * @param int $attachment_id Attachment post ID.
+     * @return array<string, string>
+     */
+    private static function build_file_to_size_map( $attachment_id ) {
+        $map  = array();
+        $meta = wp_get_attachment_metadata( $attachment_id );
+        if ( ! is_array( $meta ) ) {
+            return $map;
+        }
+
+        if ( ! empty( $meta['sizes'] ) && is_array( $meta['sizes'] ) ) {
+            foreach ( $meta['sizes'] as $size => $size_data ) {
+                if ( ! empty( $size_data['file'] ) && ! isset( $map[ $size_data['file'] ] ) ) {
+                    $map[ $size_data['file'] ] = $size;
+                }
+            }
+        }
+        if ( ! empty( $meta['file'] ) ) {
+            $map[ wp_basename( $meta['file'] ) ] = 'full';
+        }
+
+        return $map;
     }
 
     /**

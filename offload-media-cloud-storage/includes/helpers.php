@@ -554,7 +554,10 @@ if (!function_exists('acoofm_clear_cache')) {
      */
     function acoofm_clear_cache(){
         global $wpdb;
-        $sql        = 'select option_name from ' . $wpdb->prefix . 'options where option_name  like "_transient_' . ACOOFM_CACHE_GLOBAL_KEY . '%"';
+        $sql        = $wpdb->prepare(
+            "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s",
+            $wpdb->esc_like( '_transient_' . ACOOFM_CACHE_GLOBAL_KEY ) . '%'
+        );
         $results    = $wpdb->get_results( $sql, ARRAY_A );
         $transients = [];
 
@@ -639,7 +642,7 @@ if (!function_exists('acoofm_get_post_meta')) {
         if(!(!empty($key) || $attachment_id)) return false;
 
         if($db_query) {
-            $meta_data = $wpdb->get_row( "SELECT meta_value FROM $wpdb->postmeta WHERE post_id=$attachment_id AND meta_key='$key'" );
+            $meta_data = $wpdb->get_row( $wpdb->prepare( "SELECT meta_value FROM $wpdb->postmeta WHERE post_id = %d AND meta_key = %s", $attachment_id, $key ) );
             if ($wpdb->last_error || null === $meta_data || !isset($meta_data)) {
                 return false;
             }
@@ -698,6 +701,435 @@ if (!function_exists('acoofm_is_pro_active')) {
             return true;
         }
         return false;
+    }
+}
+
+if (!function_exists('acoofm_get_presigned_expire_minutes')) {
+
+    /**
+     * Presigned URL lifetime in minutes from the settings.
+     *
+     * Empty or invalid values fall back to 20 minutes. S3 compatible
+     * signatures (SigV4) are valid for at most 7 days, so pass that cap for them.
+     *
+     * @param array $settings    Plugin settings
+     * @param int   $max_minutes Upper limit, 0 for none
+     * @return int
+     */
+    function acoofm_get_presigned_expire_minutes($settings, $max_minutes = 0){
+        $minutes = isset($settings['presigned_expire']) ? (int) $settings['presigned_expire'] : 0;
+        if ($minutes < 1) {
+            $minutes = 20;
+        }
+        if ($max_minutes > 0 && $minutes > $max_minutes) {
+            $minutes = $max_minutes;
+        }
+
+        return $minutes;
+    }
+}
+
+if (!function_exists('acoofm_get_http_timeouts')) {
+
+    /**
+     * Network timeouts (seconds) for the cloud storage clients, so a stalled
+     * provider cannot hang a request indefinitely.
+     * @return array connect_timeout and timeout
+     */
+    function acoofm_get_http_timeouts(){
+        return apply_filters('acoofm_http_timeouts', array(
+            'connect_timeout' => 10,
+            'timeout'         => 300, // Whole request, including a 5 MB upload part.
+        ));
+    }
+}
+
+if (!function_exists('acoofm_s3_client_args')) {
+
+    /**
+     * Defaults for every S3 compatible client (S3, DigitalOcean, R2, MinIO):
+     * network timeouts, and no AWS SDK PHP-version deprecation notice on
+     * every request (WordPress decides the supported PHP versions).
+     * Values already set, e.g. through the client filters, are kept.
+     *
+     * @param array $args S3Client arguments
+     * @return array
+     */
+    function acoofm_s3_client_args(array $args){
+        $args += array('suppress_php_deprecation_warning' => true);
+
+        $http = isset($args['http']) && is_array($args['http']) ? $args['http'] : array();
+        $args['http'] = $http + acoofm_get_http_timeouts();
+
+        // One place to adjust every S3 compatible client (e.g. a proxy).
+        return apply_filters('acoofm_s3_client_args', $args);
+    }
+}
+
+if (!function_exists('acoofm_google_client_args')) {
+
+    /**
+     * Network timeouts for Google Cloud Storage clients; values already set are kept.
+     *
+     * @param array $args StorageClient arguments
+     * @return array
+     */
+    function acoofm_google_client_args(array $args){
+        $timeouts = acoofm_get_http_timeouts();
+
+        $args += array('requestTimeout' => $timeouts['timeout']);
+        $rest = isset($args['restOptions']) && is_array($args['restOptions']) ? $args['restOptions'] : array();
+        $args['restOptions'] = $rest + array('connect_timeout' => $timeouts['connect_timeout']);
+
+        return $args;
+    }
+}
+
+if (!function_exists('acoofm_mask_credentials')) {
+
+    /**
+     * Credentials as sent to the browser: secrets replaced by a placeholder.
+     * acoofm_unmask_credentials() restores them when the placeholder comes back.
+     *
+     * @param array $credentials Stored credentials
+     * @return array
+     */
+    function acoofm_mask_credentials($credentials){
+        if (!is_array($credentials)) {
+            return $credentials;
+        }
+        foreach (array('secret_key', 'api_token') as $field) {
+            if (isset($credentials[$field]) && is_string($credentials[$field]) && $credentials[$field] !== '') {
+                $credentials[$field] = ACOOFM_SECRET_PLACEHOLDER;
+            }
+        }
+
+        return $credentials;
+    }
+}
+
+if (!function_exists('acoofm_unmask_credentials')) {
+
+    /**
+     * Replace secret placeholders coming back from the browser with the stored secrets.
+     *
+     * @param array $credentials Credentials from a request
+     * @return array
+     */
+    function acoofm_unmask_credentials($credentials){
+        if (!is_array($credentials)) {
+            return $credentials;
+        }
+        $stored = acoofm_get_option('credentials', array());
+        foreach (array('secret_key', 'api_token') as $field) {
+            if (isset($credentials[$field]) && $credentials[$field] === ACOOFM_SECRET_PLACEHOLDER) {
+                $credentials[$field] = (is_array($stored) && isset($stored[$field])) ? $stored[$field] : '';
+            }
+        }
+
+        return $credentials;
+    }
+}
+
+if (!function_exists('acoofm_is_acl_not_supported_error')) {
+
+    /**
+     * Whether an S3 error says the bucket does not accept object ACLs
+     * (Object Ownership "Bucket owner enforced", the S3 default since April 2023)
+     * @param \Exception $e Error from putObject or a multipart upload
+     * @return boolean
+     */
+    function acoofm_is_acl_not_supported_error($e){
+        // Multipart uploads wrap the CreateMultipartUpload error.
+        if ($e instanceof \Aws\Exception\MultipartUploadException) {
+            $e = $e->getPrevious();
+        }
+
+        return $e instanceof \Aws\Exception\AwsException && $e->getAwsErrorCode() === 'AccessControlListNotSupported';
+    }
+}
+
+if (!function_exists('acoofm_is_gcs_acl_not_supported_error')) {
+
+    /**
+     * Whether a Google Cloud Storage error says the bucket does not accept object ACLs
+     * (uniform bucket-level access, the default for new buckets)
+     * @param \Exception $e Error from an object upload or update
+     * @return boolean
+     */
+    function acoofm_is_gcs_acl_not_supported_error($e){
+        return $e instanceof \Google\Cloud\Core\Exception\ServiceException
+            && 400 === (int) $e->getCode()
+            && false !== stripos(acoofm_get_gcs_error_message($e), 'uniform bucket-level access');
+    }
+}
+
+if (!function_exists('acoofm_get_gcs_error_message')) {
+
+    /**
+     * Readable message of a Google Cloud error, whose message is often the raw JSON response.
+     * @param \Exception $e Error
+     * @return string
+     */
+    function acoofm_get_gcs_error_message($e){
+        $message = (string) $e->getMessage();
+        $decoded = json_decode($message, true);
+
+        if (is_array($decoded) && !empty($decoded['error']['message']) && is_string($decoded['error']['message'])) {
+            return $decoded['error']['message'];
+        }
+
+        return $message;
+    }
+}
+
+if (!function_exists('acoofm_multipart_upload')) {
+
+    /**
+     * Multipart upload to an S3 compatible bucket.
+     *
+     * Failed parts are resumed a limited number of times; after that the
+     * incomplete upload is aborted, so its parts are not left (and billed)
+     * in the bucket, and the error is thrown.
+     *
+     * @param \Aws\S3\S3Client $client  S3 compatible client
+     * @param string           $source  Absolute file path
+     * @param array            $options MultipartUploader options (bucket, key, acl)
+     * @return \Aws\ResultInterface
+     * @throws \Aws\Exception\MultipartUploadException
+     */
+    function acoofm_multipart_upload($client, $source, array $options){
+        $max_attempts = 3;
+        $uploader = new \Aws\S3\MultipartUploader($client, $source, $options);
+
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                return $uploader->upload();
+            } catch (\Aws\Exception\MultipartUploadException $e) {
+                if ($attempt >= $max_attempts || acoofm_is_acl_not_supported_error($e)) {
+                    $state = $e->getState();
+                    if ($state->isInitiated()) {
+                        try {
+                            $client->abortMultipartUpload($state->getId());
+                        } catch (\Exception $abort_error) {
+                            // The bucket lifecycle rules can still clean it up.
+                        }
+                    }
+                    throw $e;
+                }
+
+                // Resume, keeping the parts already uploaded.
+                $uploader = new \Aws\S3\MultipartUploader($client, $source, array(
+                    'state' => $e->getState(),
+                ));
+            }
+        }
+    }
+}
+
+if (!function_exists('acoofm_get_key_file_dir')) {
+
+    /**
+     * Directory holding uploaded provider key files (Google service account JSON)
+     * @return string
+     */
+    function acoofm_get_key_file_dir(){
+        $upload_dir = wp_get_upload_dir();
+        return $upload_dir['basedir'] . '/' . ACOOFM_UPLOADS;
+    }
+}
+
+if (!function_exists('acoofm_protect_key_file_dir')) {
+
+    /**
+     * Create the key file directory and deny all web access to it.
+     * Key files also get random names, as .htaccess is ignored on nginx and IIS.
+     * @param string $dir Key file directory, required inside an upload_dir filter.
+     * @return boolean Whether the directory exists
+     */
+    function acoofm_protect_key_file_dir($dir = ''){
+        if (!$dir) {
+            $dir = acoofm_get_key_file_dir();
+        }
+        if (!wp_mkdir_p($dir)) {
+            return false;
+        }
+
+        $files = array(
+            '.htaccess' => '# Offload Media: provider key files must never be served.' . "\n"
+                . 'Options -Indexes' . "\n"
+                . '<IfModule mod_authz_core.c>' . "\n"
+                . '    Require all denied' . "\n"
+                . '</IfModule>' . "\n"
+                . '<IfModule !mod_authz_core.c>' . "\n"
+                . '    Order deny,allow' . "\n"
+                . '    Deny from all' . "\n"
+                . '</IfModule>' . "\n",
+            'index.php' => '<?php ' . "\n"
+                . '// Silence is golden.'
+        );
+
+        foreach ($files as $name => $content) {
+            $file = trailingslashit($dir) . $name;
+            // Older versions wrote an .htaccess that only blocked PHP files.
+            if (file_exists($file) && ($name !== '.htaccess' || file_get_contents($file) === $content)) {
+                continue;
+            }
+            if ($file_handle = @fopen($file, 'w')) {
+                fwrite($file_handle, $content);
+                fclose($file_handle);
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('acoofm_generate_key_file_path')) {
+
+    /**
+     * Unguessable path for a new key file in the key file directory
+     * @return string
+     */
+    function acoofm_generate_key_file_path(){
+        $dir = trailingslashit(acoofm_get_key_file_dir());
+        do {
+            $path = $dir . 'acoofm-key-' . wp_generate_password(32, false) . '.json';
+        } while (file_exists($path));
+
+        return $path;
+    }
+}
+
+if (!function_exists('acoofm_is_generated_key_file')) {
+
+    /**
+     * Whether a key file already has a name from acoofm_generate_key_file_path()
+     * @return boolean
+     */
+    function acoofm_is_generated_key_file($path){
+        return (bool) preg_match('/^acoofm-key-[A-Za-z0-9]{32}\.json$/', wp_basename($path));
+    }
+}
+
+if (!function_exists('acoofm_is_allowed_key_file_path')) {
+
+    /**
+     * Whether a key file path sent to the REST API may be used.
+     *
+     * Allowed: files uploaded to the key file directory, the key file set in
+     * wp-config.php (ACOOFM_SETTINGS) and the key file already saved by an admin.
+     * @return boolean
+     */
+    function acoofm_is_allowed_key_file_path($path){
+        // No stream wrappers (phar://, http://), only local JSON files.
+        if (!is_string($path) || $path === '' || false !== strpos($path, '://')) {
+            return false;
+        }
+        if (strtolower(pathinfo($path, PATHINFO_EXTENSION)) !== 'json') {
+            return false;
+        }
+
+        $file = realpath($path);
+        if (!$file || !is_file($file)) {
+            return false;
+        }
+
+        $dir = realpath(acoofm_get_key_file_dir());
+        if ($dir && 0 === strpos($file, rtrim($dir, '/\\') . DIRECTORY_SEPARATOR)) {
+            return true;
+        }
+
+        $trusted = array(acoofm_get_credentials('file_path', ''));
+        if (defined('ACOOFM_SETTINGS')) {
+            $settings = unserialize(ACOOFM_SETTINGS);
+            if (is_array($settings) && isset($settings['key-file-path'])) {
+                $trusted[] = $settings['key-file-path'];
+            }
+        }
+        foreach ($trusted as $trusted_path) {
+            if (is_string($trusted_path) && $trusted_path !== '' && realpath($trusted_path) === $file) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('acoofm_is_google_credentials_file')) {
+
+    /**
+     * Whether a file holds Google Cloud credentials JSON
+     * @return boolean
+     */
+    function acoofm_is_google_credentials_file($path){
+        $max_size = 100 * 1024; // Service account keys are ~2.5 KB.
+        if (!is_readable($path) || filesize($path) > $max_size) {
+            return false;
+        }
+
+        $data = json_decode((string) file_get_contents($path), true);
+        $types = array('service_account', 'authorized_user', 'external_account', 'impersonated_service_account');
+
+        return is_array($data) && isset($data['type']) && in_array($data['type'], $types, true);
+    }
+}
+
+if (!function_exists('acoofm_secure_key_files')) {
+
+    /**
+     * Upgrade key files stored by earlier versions: deny web access to the
+     * directory and give every key file an unguessable name, keeping the
+     * saved configuration pointing at the renamed file.
+     * @return void
+     */
+    function acoofm_secure_key_files(){
+        $dir = acoofm_get_key_file_dir();
+        if (!is_dir($dir) || !acoofm_protect_key_file_dir()) {
+            return;
+        }
+
+        $files = glob(trailingslashit($dir) . '*.json');
+        if (!$files) {
+            return;
+        }
+
+        $saved_path = acoofm_get_credentials('file_path', '');
+        $saved_file = (is_string($saved_path) && $saved_path !== '') ? realpath($saved_path) : false;
+
+        // A key file named in wp-config.php cannot be renamed from here.
+        $config_file = false;
+        if (defined('ACOOFM_SETTINGS')) {
+            $settings = unserialize(ACOOFM_SETTINGS);
+            if (is_array($settings) && !empty($settings['key-file-path'])) {
+                $config_file = realpath($settings['key-file-path']);
+            }
+        }
+
+        foreach ($files as $file) {
+            if (
+                !is_file($file) || acoofm_is_generated_key_file($file) ||
+                ($config_file && realpath($file) === $config_file)
+            ) {
+                continue;
+            }
+
+            $is_saved = $saved_file && realpath($file) === $saved_file;
+            $new_path = acoofm_generate_key_file_path();
+            if (!@rename($file, $new_path)) {
+                continue;
+            }
+
+            if ($is_saved) {
+                $credentials = acoofm_get_option('credentials', array());
+                $credentials['file_path'] = $new_path;
+                if (!acoofm_update_option('credentials', $credentials)) {
+                    // Keep the saved configuration working.
+                    @rename($new_path, $file);
+                }
+            }
+        }
     }
 }
 

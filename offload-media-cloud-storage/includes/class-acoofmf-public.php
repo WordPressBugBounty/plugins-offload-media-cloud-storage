@@ -118,6 +118,13 @@ class ACOOFMF_Public
         add_filter('delete_attachment', array($this, 'delete_attachment'), 20);
         add_filter('update_attached_file', array($this, 'update_attached_file'), 100, 2); 
         add_filter('load_image_to_edit_path', array($this, 'load_image_to_edit_path'), 10, 3 );
+        add_action('add_attachment', array($this, 'enqueue_new_attachment'), 20);
+        add_action('acoofm_process_offload_attachment', array($this, 'process_scheduled_offload'), 10, 1);
+        add_action('acoofm_process_offload_queue', array($this, 'process_offload_queue'));
+        add_action('shutdown', array($this, 'maybe_process_offload_on_shutdown'), 100);
+        add_filter('cron_schedules', array('ACOOFMF_Offload_Queue', 'cron_schedules'));
+        add_filter('rest_request_before_callbacks', array($this, 'track_rest_media_request'), 10, 3);
+        add_filter('rest_request_after_callbacks', array($this, 'untrack_rest_media_request'), 10, 3);
 
     }
 
@@ -125,116 +132,600 @@ class ACOOFMF_Public
     /**
      * Function to execute on wp_generate_attachment_metadata
      * To delete files from server only after updating all meta
+     *
+     * The offload runs after sub-size generation (final metadata update or the
+     * queue worker), so the item does not exist yet here. The attachment is
+     * flagged instead and remove_generated_local_files() deletes the local
+     * copies once that offload completes.
      * @since 1.0.4
      *
      */
 
     public function wp_generate_attachment_metadata( $attachment_meta, $attachment_id, $action) {
         if($action == 'create') {
-            global $acoofmService;
-            global $acoofmItem;
-    
             if (!(
                 acoofm_is_service_enabled() &&
                 acoofm_is_copy_to_server() &&
-                isset($attachment_id) && !empty($attachment_id) &&
-                $acoofmItem->get((int)$attachment_id)
+                isset($attachment_id) && !empty($attachment_id)
             )) {
                 return $attachment_meta;
             }
 
-            $type       = get_post_mime_type((int) $attachment_id);
-            $is_image   = (0 === strpos($type, 'image/'));
-            $settings   = acoofm_get_settings();
-            $upload_dir = wp_get_upload_dir();
-            $file           = '';
-            $rel_path       = '';
-            $file_path      = '';
-            $file_path_dir  = '';
-            $original_file  = '';
-            $old_item       = $acoofmItem->get((int)$attachment_id);
-            $old_extras     = $acoofmItem->get_extras((int)$attachment_id);
-
-            // Get File Name/Path from Image meta
-            if (
-                isset($attachment_meta) && !empty($attachment_meta) &&
-                isset($attachment_meta['file']) && !empty($attachment_meta['file'])
-            ) {
-                $file = $attachment_meta['file'];
-            } else {
-                $file = acoofm_get_post_meta((int) $attachment_id, '_wp_attached_file', true);
+            $settings = acoofm_get_settings();
+            if (!(isset($settings['remove_from_server']) && $settings['remove_from_server'])) {
+                return $attachment_meta;
             }
 
-            // Generate relative path of the file 
-            $rel_path = acoofm_get_attachment_relative_path($file);
-
-            // Delete file from server if exist
-            if (
-                $rel_path && 
-                isset($settings['remove_from_server']) && 
-                $settings['remove_from_server']
-            ) {
-                $file_path = trailingslashit($upload_dir['basedir']) . $rel_path;
-                $file_path_dir = isset(pathinfo($file_path)['dirname']) ? pathinfo($file_path)['dirname'] : '';
-
-                if(file_exists($file_path)) {
-                    wp_delete_file($file_path);
-                }
-
-                // Delete original image if exist
-                if (
-                    $is_image &&
-                    isset($attachment_meta['original_image']) && !empty($attachment_meta['original_image']) &&
-                    isset($old_extras['original']) && !empty($old_extras['original']) &&
-                    isset($old_extras['original']['source']) && !empty($old_extras['original']['source']) 
-                ) {
-                    $original_file = $attachment_meta['original_image'];
-                    if( isset($original_file) && !empty($original_file)) {
-                        $original_file_path     = trailingslashit($file_path_dir) . $original_file;
-                        if(file_exists($original_file_path)) {
-                            wp_delete_file($original_file_path);
-                        }
-                    }
-                }
-
-                // Confirm Every size is deleted
-                if (
-                    $is_image &&
-                    isset($attachment_meta['sizes']) && !empty($attachment_meta['sizes']) &&
-                    isset($old_extras['sizes']) && !empty($old_extras['sizes']) &&
-                    isset($file_path_dir) && !empty($file_path_dir)
-                ) {
-                    foreach ($attachment_meta['sizes'] as $size => $sub_image) {
-                        if (
-                            isset($sub_image) && !empty($sub_image) &&
-                            isset($sub_image['file']) && !empty($sub_image['file']) &&
-                            isset($old_extras['sizes'][$size]) && !empty($old_extras['sizes'][$size]) &&
-                            isset($old_extras['sizes'][$size]['url']) && !empty($old_extras['sizes'][$size]['url'])
-                        ) {
-                            $sub_file_path = $file_path_dir . '/' . $sub_image['file'];
-                        }
-                    
-                        if (file_exists($sub_file_path)){
-                            wp_delete_file($sub_file_path);
-                        }
-                    }
-                }
+            $rel_path = $this->get_attachment_rel_path($attachment_meta, (int) $attachment_id);
+            if ($rel_path) {
+                $this->get_offload_queue()->request_local_cleanup((int) $attachment_id, $rel_path);
             }
-        } 
+        }
 
         return $attachment_meta;
     }
 
+    /**
+     * Relative path of the attachment main file, as recorded in the items table.
+     *
+     * @param array $attachment_meta Attachment metadata.
+     * @param int   $attachment_id   Attachment ID.
+     * @return string|false
+     */
+    private function get_attachment_rel_path($attachment_meta, $attachment_id)
+    {
+        if (
+            isset($attachment_meta) && !empty($attachment_meta) &&
+            isset($attachment_meta['file']) && !empty($attachment_meta['file'])
+        ) {
+            $file = $attachment_meta['file'];
+        } else {
+            $file = acoofm_get_post_meta((int) $attachment_id, '_wp_attached_file', true);
+        }
+
+        return acoofm_get_attachment_relative_path($file);
+    }
 
     /**
-     * Function to execute on wp_update_attachment_metadata
-     * @since 1.0.0
+     * Delete the local files of a newly generated attachment once it is offloaded.
      *
+     * Only runs for an attachment flagged by wp_generate_attachment_metadata
+     * ('create') whose main file is still the generated one, and each file is
+     * deleted only when the item records that same file in the cloud.
+     *
+     * @param int   $attachment_id   Attachment ID.
+     * @param array $attachment_meta Attachment metadata (may be empty).
+     * @return void
+     */
+    private function remove_generated_local_files($attachment_id, $attachment_meta)
+    {
+        global $acoofmItem;
+
+        $cleanup_path = $this->get_offload_queue()->take_local_cleanup($attachment_id);
+        if ($cleanup_path === '') {
+            return;
+        }
+
+        $settings = acoofm_get_settings();
+        if (!(isset($settings['remove_from_server']) && $settings['remove_from_server'])) {
+            return;
+        }
+
+        if (!(isset($attachment_meta) && !empty($attachment_meta))) {
+            $attachment_meta = wp_get_attachment_metadata($attachment_id);
+        }
+
+        $rel_path = $this->get_attachment_rel_path($attachment_meta, $attachment_id);
+        $item     = $acoofmItem->get((int) $attachment_id);
+        if (
+            !$rel_path || $rel_path !== $cleanup_path ||
+            !$item || !isset($item['source_path']) || $item['source_path'] !== $rel_path
+        ) {
+            return;
+        }
+
+        $upload_dir     = wp_get_upload_dir();
+        $file_path      = trailingslashit($upload_dir['basedir']) . $rel_path;
+        $file_path_dir  = dirname($file_path);
+        $extras         = $acoofmItem->get_extras((int) $attachment_id);
+        if (!is_array($extras)) {
+            $extras = array();
+        }
+
+        if (file_exists($file_path)) {
+            wp_delete_file($file_path);
+        }
+
+        // Delete original image if it is offloaded
+        if (
+            isset($attachment_meta['original_image']) && !empty($attachment_meta['original_image']) &&
+            isset($extras['original']['source']) && $extras['original']['source'] === $attachment_meta['original_image']
+        ) {
+            $original_file_path = trailingslashit($file_path_dir) . $attachment_meta['original_image'];
+            if (file_exists($original_file_path)) {
+                wp_delete_file($original_file_path);
+            }
+        }
+
+        // Confirm every offloaded size is deleted
+        if (
+            isset($attachment_meta['sizes']) && is_array($attachment_meta['sizes']) &&
+            isset($extras['sizes']) && is_array($extras['sizes'])
+        ) {
+            foreach ($attachment_meta['sizes'] as $size => $sub_image) {
+                if (
+                    !isset($sub_image['file']) || empty($sub_image['file']) ||
+                    !isset($extras['sizes'][$size]['url']) || empty($extras['sizes'][$size]['url'])
+                ) {
+                    continue;
+                }
+
+                $sub_file_path = $file_path_dir . '/' . $sub_image['file'];
+                if (
+                    isset($extras['sizes'][$size]['source_path']) &&
+                    $extras['sizes'][$size]['source_path'] !== acoofm_get_attachment_relative_path($sub_file_path)
+                ) {
+                    continue;
+                }
+
+                if (file_exists($sub_file_path)) {
+                    wp_delete_file($sub_file_path);
+                }
+            }
+        }
+    }
+
+
+    /**
+     * Persistent offload pipeline for the current request.
+     *
+     * @var ACOOFMF_Offload_Queue|null
+     */
+    private $offload_queue = null;
+
+    /**
+     * Enroll a newly created attachment before thumbnails or cloud upload run.
+     *
+     * add_attachment fires from wp_insert_attachment after the file is on disk
+     * and the ID exists. Gallery REST uses this path. If metadata generation
+     * later times out, the item remains pending instead of disappearing.
+     *
+     * @param int $post_id Attachment ID.
+     * @return void
+     */
+    public function enqueue_new_attachment($post_id)
+    {
+        $post_id = (int) $post_id;
+        if ($post_id <= 0) {
+            return;
+        }
+
+        if (!(acoofm_is_service_enabled() && acoofm_is_copy_to_server())) {
+            return;
+        }
+
+        if (function_exists('get_post_type') && get_post_type($post_id) && get_post_type($post_id) !== 'attachment') {
+            return;
+        }
+
+        $queue = $this->get_offload_queue();
+        if ($queue->enqueue($post_id)) {
+            // Hold it while this request generates sub-sizes; released after the offload or at shutdown.
+            $queue->acquire_lock($post_id);
+        }
+        $queue->ensure_cron();
+    }
+
+    /**
+     * Drain pending/retrying attachments outside the media upload request.
+     *
+     * @return void
+     */
+    public function process_offload_queue()
+    {
+        if (!(acoofm_is_service_enabled() && acoofm_is_copy_to_server())) {
+            return;
+        }
+
+        $queue = $this->get_offload_queue();
+
+        // Work for a limited time per run instead of a fixed 3 items, so a large
+        // batch is not spread over many minutes; anything left gets another run.
+        $deadline = microtime(true) + (int) apply_filters('acoofm_offload_queue_time_limit', 20);
+        $tried = array();
+        do {
+            // Skip IDs tried in this run (still locked by their upload request, or retried later).
+            $ids = array_diff($queue->get_pending_ids(count($tried) + 5), $tried);
+            foreach ($ids as $attachment_id) {
+                $tried[] = $attachment_id;
+                $this->process_scheduled_offload($attachment_id);
+                if (microtime(true) >= $deadline) {
+                    break 2;
+                }
+            }
+        } while (!empty($ids));
+
+        if (array_diff($queue->get_pending_ids(count($tried) + 1), $tried)) {
+            $queue->ensure_cron(true);
+        }
+    }
+
+    /**
+     * After FastCGI has flushed the REST response, offload this request's items.
+     *
+     * @return void
+     */
+    public function maybe_process_offload_on_shutdown()
+    {
+        $queue = $this->get_offload_queue();
+
+        if (!(acoofm_is_service_enabled() && acoofm_is_copy_to_server())) {
+            $queue->release_held_locks();
+            return;
+        }
+
+        // Uploads waiting for their client-side finalize are offloaded by that request.
+        $ids = array_diff($queue->get_request_ids(), $this->awaiting_finalize);
+        if (empty($ids)) {
+            $queue->release_held_locks();
+            return;
+        }
+
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+            foreach ($ids as $attachment_id) {
+                $this->process_scheduled_offload($attachment_id);
+            }
+            $queue->release_held_locks();
+            return;
+        }
+
+        // Hand this request's attachments to the queue worker.
+        $queue->release_held_locks();
+        $queue->ensure_cron();
+    }
+
+    /**
+     * @return ACOOFMF_Offload_Queue
+     */
+    private function get_offload_queue()
+    {
+        if (!$this->offload_queue) {
+            $this->offload_queue = new ACOOFMF_Offload_Queue();
+        }
+
+        return $this->offload_queue;
+    }
+
+    /**
+     * Client-side media REST request being served: 'upload' or 'finalize'.
+     *
+     * @var array{type: string, id: int}|null
+     */
+    private $rest_media_request = null;
+
+    /**
+     * Outer requests' values while a nested REST request (rest_do_request) runs.
+     *
+     * @var array
+     */
+    private $rest_media_request_stack = array();
+
+    /**
+     * Attachments of this request that wait for their client-side finalize.
+     *
+     * @var int[]
+     */
+    private $awaiting_finalize = array();
+
+    /**
+     * Note client-side media processing requests (WordPress 7.1+).
+     *
+     * The block editor uploads only the original (generate_sub_sizes=false),
+     * sideloads the sub-sizes it made in the browser, then calls /finalize,
+     * whose response gives the editor the URLs it keeps.
+     *
+     * @param mixed           $response Response so far.
+     * @param array           $handler  Route handler.
+     * @param WP_REST_Request $request  Request.
+     * @return mixed
+     */
+    public function track_rest_media_request($response, $handler, $request)
+    {
+        $this->rest_media_request_stack[] = $this->rest_media_request;
+        $this->rest_media_request = null;
+
+        if (!($request instanceof WP_REST_Request) || 'POST' !== $request->get_method()) {
+            return $response;
+        }
+
+        $route = $request->get_route();
+        if (preg_match('#^/wp/v2/media/(\d+)/finalize$#', $route, $matches)) {
+            $this->rest_media_request = array('type' => 'finalize', 'id' => (int) $matches[1]);
+        } elseif ('/wp/v2/media' === $route && false === $request['generate_sub_sizes']) {
+            $this->rest_media_request = array('type' => 'upload', 'id' => 0);
+        }
+
+        return $response;
+    }
+
+    /**
+     * @param mixed           $response Response.
+     * @param array           $handler  Route handler.
+     * @param WP_REST_Request $request  Request.
+     * @return mixed
+     */
+    public function untrack_rest_media_request($response, $handler, $request)
+    {
+        $this->rest_media_request = $this->rest_media_request_stack
+            ? array_pop($this->rest_media_request_stack)
+            : null;
+
+        return $response;
+    }
+
+    /**
+     * Whether this request is the client-side finalize of the attachment.
+     *
+     * @param int $attachment_id Attachment ID.
+     * @return bool
+     */
+    private function is_finalize_request($attachment_id)
+    {
+        return $this->rest_media_request
+            && 'finalize' === $this->rest_media_request['type']
+            && (int) $attachment_id === $this->rest_media_request['id'];
+    }
+
+    /**
+     * Gallery /wp/v2/media POST must not perform cloud I/O in-process.
+     *
+     * The client-side /finalize request is the exception: every file is on
+     * disk by then, and its response is where the editor gets the URLs.
+     *
+     * @param int $attachment_id Attachment ID.
+     * @return bool
+     */
+    private function should_defer_offload($attachment_id = 0)
+    {
+        if (!empty($GLOBALS['acoofm_defer_offload'])) {
+            return true;
+        }
+
+        if (
+            $this->is_finalize_request($attachment_id) &&
+            apply_filters('acoofm_offload_on_finalize', true, (int) $attachment_id)
+        ) {
+            return false;
+        }
+
+        if (defined('REST_REQUEST') && REST_REQUEST) {
+            $method = isset($_SERVER['REQUEST_METHOD']) ? strtoupper((string) $_SERVER['REQUEST_METHOD']) : '';
+            if (in_array($method, array('POST', 'PUT', 'PATCH'), true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Offload an attachment after WordPress has saved its metadata.
+     *
+     * WordPress calls wp_update_attachment_metadata after every sub-size during
+     * wp_generate_attachment_metadata. Gutenberg also uploads many files in
+     * parallel. Cloud uploads in those intermediate/hot paths time out or throw,
+     * which 500s /wp/v2/media (editor “Something went wrong”) and leaves the
+     * local attachment unoffloaded.
+     *
+     * The attachment is enrolled as pending first. Cloud work is deferred on
+     * REST media uploads and during thumbnail generation, then completed by
+     * the queue worker so no ID can vanish from the pipeline. A client-side
+     * upload (WordPress 7.1+) waits for its /finalize request, which offloads
+     * in-process so the editor receives cloud URLs.
+     *
+     * Already offloaded attachments are enrolled again, so edited images,
+     * regenerated thumbnails and new sub-sizes reach the cloud as well.
+     *
+     * @since 1.0.0
      */
     public function update_attachment_metadata($attachment_meta, $attachment_id)
     {
+        if (!(
+            acoofm_is_service_enabled() &&
+            acoofm_is_copy_to_server() &&
+            isset($attachment_id) && !empty($attachment_id)
+        )) {
+            return $attachment_meta;
+        }
+
+        $queue = $this->get_offload_queue();
+        $queue->enqueue((int) $attachment_id, true);
+
+        if ($this->is_during_image_subsize_generation()) {
+            // Keep the queue worker off a partial set of sub-sizes until generation finishes.
+            $queue->acquire_lock((int) $attachment_id);
+            $queue->ensure_cron();
+            return $attachment_meta;
+        }
+
+        if ($this->should_defer_offload($attachment_id)) {
+            if ($this->rest_media_request && 'upload' === $this->rest_media_request['type']) {
+                // Only the original exists yet; /finalize offloads the complete set.
+                // The worker still takes it if the editor never finalizes.
+                $queue->delay(
+                    (int) $attachment_id,
+                    (int) apply_filters('acoofm_client_side_finalize_wait', 300, (int) $attachment_id)
+                );
+                $this->awaiting_finalize[(int) $attachment_id] = (int) $attachment_id;
+            }
+            $queue->ensure_cron();
+            return $attachment_meta;
+        }
+
+        $is_finalize = $this->is_finalize_request($attachment_id);
+        if ($is_finalize) {
+            // The upload runs before the response; keep it within the lock lifetime.
+            $time_limit = (int) ini_get('max_execution_time');
+            if ($time_limit > 0 && $time_limit < ACOOFMF_Offload_Queue::LOCK_TTL && function_exists('set_time_limit')) {
+                @set_time_limit(ACOOFMF_Offload_Queue::LOCK_TTL);
+            }
+        }
+
+        $this->run_offload_attempt((int) $attachment_id, $attachment_meta);
+
+        if ($is_finalize) {
+            // The response is built next in this request; resolve URLs from the new item.
+            ACOOFMF_URL_Rewrite_Resolver::clear_request_cache();
+        }
+
+        return $attachment_meta;
+    }
+
+    /**
+     * Process one queued attachment. Safe to call from cron after the upload REST request has finished.
+     *
+     * @param int $attachment_id Attachment ID.
+     * @return void
+     */
+    public function process_scheduled_offload($attachment_id)
+    {
+        $attachment_id = (int) $attachment_id;
+        if ($attachment_id <= 0) {
+            return;
+        }
+
+        if (!(acoofm_is_service_enabled() && acoofm_is_copy_to_server())) {
+            return;
+        }
+
+        $attachment_meta = wp_get_attachment_metadata($attachment_id);
+        if (!is_array($attachment_meta)) {
+            $attachment_meta = array();
+        }
+
+        $this->run_offload_attempt($attachment_id, $attachment_meta);
+    }
+
+    /**
+     * Why the last offload attempt uploaded nothing (provider message), if known.
+     *
+     * @var string
+     */
+    private $last_offload_error = '';
+
+    /**
+     * Attempt a single offload while holding a per-attachment lock.
+     *
+     * @param int   $attachment_id   Attachment ID.
+     * @param array $attachment_meta Attachment metadata (may be empty).
+     * @return void
+     */
+    private function run_offload_attempt($attachment_id, $attachment_meta)
+    {
+        $queue = $this->get_offload_queue();
+        $status = $queue->get_status($attachment_id);
+
+        if (ACOOFMF_Offload_Queue::STATUS_COMPLETED === $status) {
+            return;
+        }
+        if (ACOOFMF_Offload_Queue::STATUS_PERMANENTLY_FAILED === $status) {
+            return;
+        }
+
+        if (!$queue->acquire_lock($attachment_id)) {
+            return;
+        }
+
+        $queue->enqueue($attachment_id);
+        $queue->mark($attachment_id, ACOOFMF_Offload_Queue::STATUS_OFFLOADING);
+
+        $requeued = false;
+        $this->last_offload_error = '';
+        try {
+            $this->offload_attachment_on_metadata_update($attachment_meta, $attachment_id);
+
+            global $acoofmItem;
+            if ($acoofmItem && $acoofmItem->get($attachment_id)) {
+                if (ACOOFMF_Offload_Queue::STATUS_COMPLETED === $queue->complete($attachment_id)) {
+                    $this->remove_generated_local_files($attachment_id, $attachment_meta);
+                } else {
+                    $requeued = true;
+                }
+                delete_post_meta($attachment_id, '_acoofm_offload_retry_count');
+            } else {
+                $current = $queue->get_status($attachment_id);
+                if (ACOOFMF_Offload_Queue::STATUS_PERMANENTLY_FAILED !== $current) {
+                    $queue->mark_failure(
+                        $attachment_id,
+                        'Remote object was not recorded' . ('' !== $this->last_offload_error ? ': ' . $this->last_offload_error : '')
+                    );
+                }
+            }
+        } catch (\Throwable $e) {
+            $queue->mark_failure($attachment_id, $e->getMessage());
+        }
+
+        $queue->release_lock($attachment_id);
+
+        if ($requeued) {
+            // Metadata changed during the upload; let the worker pick up the new version.
+            $queue->ensure_cron();
+        }
+    }
+
+    /**
+     * Whether the current metadata update is an in-progress thumbnail save.
+     *
+     * @return bool
+     */
+    private function is_during_image_subsize_generation()
+    {
+        $skip_functions = array(
+            'wp_generate_attachment_metadata',
+            'wp_create_image_subsizes',
+            '_wp_make_subsizes',
+        );
+
+        foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 20) as $frame) {
+            if (!empty($frame['function']) && in_array($frame['function'], $skip_functions, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve the active storage client, or null when none is usable.
+     *
+     * @return object|null
+     */
+    private function get_storage_service()
+    {
         global $acoofmService;
         global $acoofmProService;
+
+        if (is_object($acoofmService) && method_exists($acoofmService, 'connect') && method_exists($acoofmService, 'uploadSingle')) {
+            return $acoofmService;
+        }
+
+        if (is_object($acoofmProService) && method_exists($acoofmProService, 'connect') && method_exists($acoofmProService, 'uploadSingle')) {
+            return $acoofmProService;
+        }
+
+        return null;
+    }
+
+    /**
+     * Copy local attachment files to the configured provider.
+     *
+     * @param array $attachment_meta Attachment metadata.
+     * @param int   $attachment_id   Attachment ID.
+     * @return array
+     */
+    private function offload_attachment_on_metadata_update($attachment_meta, $attachment_id)
+    {
         global $acoofmItem;
 
         if (!(
@@ -316,6 +807,11 @@ class ACOOFMF_Public
 
             // Check whether the extension is enabled for uploading
             if (!acoofm_is_extension_available($file_path)) {
+                $this->get_offload_queue()->mark(
+                    (int) $attachment_id,
+                    ACOOFMF_Offload_Queue::STATUS_PERMANENTLY_FAILED,
+                    'Extension is not enabled for offload'
+                );
                 return $attachment_meta;
             }
 
@@ -369,37 +865,40 @@ class ACOOFMF_Public
 
                 if ($proceedUpload && !$restore_backup && file_exists($file_path)) {
                     $update_to_db = true;
+                    $service = $this->get_storage_service();
 
-                    if (is_object($acoofmService) && method_exists($acoofmService, 'connect') && method_exists($acoofmService, 'uploadSingle')) {
-                        $service = $acoofmService;
+                    if (!($service && $service->connect())) {
+                        $this->last_offload_error = 'Storage service is not connected';
                     } else {
-                        $service = $acoofmProService;
-                    }
-
-                    if ($service->connect()) {
                         $uploaded = $service->uploadSingle($file_path, $rel_path, $prefix);
-                
-                        // Upload Original file if exist
-                        if(
-                            isset($original_file) && !empty($original_file) && 
-                            file_exists($original_file_path) && $proceedUploadOriginal &&
-                            isset($uploaded) && !empty($uploaded) &&
-                            isset($uploaded['success']) && $uploaded['success']
-                        ) {
-                            $uploaded_original = $service->uploadSingle($original_file_path, $original_file_rel_path, $prefix);
-                            $uploaded_original['source'] = $original_file;
+
+                        if (empty($uploaded['success']) && !empty($uploaded['Message'])) {
+                            $this->last_offload_error = (string) $uploaded['Message'];
+                        }
+
+                        if (!empty($uploaded['success'])) {
+                            // Upload Original file if exist
+                            if(
+                                isset($original_file) && !empty($original_file) && 
+                                file_exists($original_file_path) && $proceedUploadOriginal &&
+                                isset($uploaded) && !empty($uploaded) &&
+                                isset($uploaded['success']) && $uploaded['success']
+                            ) {
+                                $uploaded_original = $service->uploadSingle($original_file_path, $original_file_rel_path, $prefix);
+                                $uploaded_original['source'] = $original_file;
+                                
+                                if(isset($uploaded_original['success']) && $uploaded_original['success']){
+                                    $offloaded_count++;
+                                }
+                            }
                             
-                            if(isset($uploaded_original['success']) && $uploaded_original['success']){
+                            if(
+                                isset($uploaded_original['success']) && 
+                                $uploaded_original['success'] && 
+                                !$keep_backup
+                            ) {
                                 $offloaded_count++;
                             }
-                        }
-                        
-                        if(
-                            isset($uploaded_original['success']) && 
-                            $uploaded_original['success'] && 
-                            !$keep_backup
-                        ) {
-                            $offloaded_count++;
                         }
                     }
                 }
@@ -454,14 +953,9 @@ class ACOOFMF_Public
                         if ($proceedUpload && file_exists($sub_file_path)) {
                             $update_to_db       = true;
                             $uploaded_sub_image = array();
+                            $service = $this->get_storage_service();
 
-                            if (is_object($acoofmService) && method_exists($acoofmService, 'connect') && method_exists($acoofmService, 'uploadSingle')) {
-                                $service = $acoofmService;
-                            } else {
-                                $service = $acoofmProService;
-                            }
-
-                            if ($service->connect()) {
+                            if ($service && $service->connect()) {
                                 $uploaded_sub_image = $service->uploadSingle($sub_file_path, $sub_file_rel_path, $prefix);
                                 if(
                                     !$keep_backup && 
@@ -537,8 +1031,10 @@ class ACOOFMF_Public
                     );
 
                     $acoofmItem->update((int) $attachment_id, $item_data);
+                    delete_post_meta((int) $attachment_id, '_acoofm_offload_retry_count');
                 } else {
                     $acoofmItem->add((int) $attachment_id, $uploaded['file_url'], $uploaded['key'], $rel_path, $meta);
+                    delete_post_meta((int) $attachment_id, '_acoofm_offload_retry_count');
                 }
 
                 // // Delete file if enabled remove file from server
@@ -622,6 +1118,11 @@ class ACOOFMF_Public
             $service = $acoofmProService;
         }
 
+        // No usable provider (e.g. a Pro-only provider while Pro is inactive).
+        if (!(is_object($service) && method_exists($service, 'deleteSingle'))) {
+            return;
+        }
+
         if (
             isset($item) && !empty($item) &&
             isset($item['provider']) && !empty($item['provider'])
@@ -694,6 +1195,10 @@ class ACOOFMF_Public
             $service = $acoofmService;
         } else {
             $service = $acoofmProService;
+        }
+
+        if (!(is_object($service) && method_exists($service, 'deleteSingle'))) {
+            return;
         }
 
         if (
@@ -814,9 +1319,13 @@ class ACOOFMF_Public
     }
 
     /**
-     * Return the provider URL when the local file is missing
-     * unless we know who the calling process is and we are happy
-     * to copy the file back to the server to be used.
+     * Keep get_attached_file / wp_get_original_image_path as filesystem paths.
+     *
+     * Cloud URLs belong on wp_get_attachment_url / srcset / image attributes.
+     * Returning a remote URL here makes WordPress 7 REST media (and
+     * wp_get_missing_image_subsizes) call wp_getimagesize() on the original
+     * over HTTP after each offload, which crashes the block editor during
+     * gallery batch uploads.
      *
      * @handles get_attached_file
      * @handles wp_get_original_image_path
@@ -828,39 +1337,6 @@ class ACOOFMF_Public
      */
     public function get_attached_file($file, $attachment_id)
     {
-        global $acoofmItem;
-
-        if(!$attachment_id || !$acoofmItem) {
-            return $file;
-        }
-
-        if (!(
-            acoofm_is_service_enabled() &&
-            acoofm_is_rewrite_url() &&
-            $acoofmItem->is_available_from_provider($attachment_id)
-        )) {
-            return $file;
-        }
-
-        if( isset($_REQUEST['action']) &&  $_REQUEST['action'] === 'image-editor' ) {
-            // Avoid rewriting URL when image restore in image editor
-            if(isset($_REQUEST['do']) && $_REQUEST['do']==='restore') {
-                return $file;
-            }
-            // Avoid rewriting URL when image save in image editor
-            if(isset($_REQUEST['do']) && $_REQUEST['do'] === 'save') {
-                return $file;
-            }
-        }
-        
-        $acoofm_item = $acoofmItem->get($attachment_id);
-
-        $url = $acoofmItem->get_url((int) $attachment_id);
-
-        if ($url) {
-            $file = apply_filters('acoofm_get_attached_file', $url, $file, $attachment_id, $acoofm_item);
-        }
-        $file = preg_replace('/([^:])(\/{2,})/', '$1/', $file); // to remove double slash trapped during any operations
         return $file;
     }
 

@@ -190,9 +190,9 @@ class ACOOFMF_GOOGLE
             $this->acoofm_google_config_path = $this->config['file_path'];
 
             if(file_exists($this->acoofm_google_config_path)) {
-                $this->acoofm_google_client = new StorageClient([
+                $this->acoofm_google_client = new StorageClient(acoofm_google_client_args([
                     'keyFilePath' => $this->acoofm_google_config_path,
-                ]);
+                ]));
                 $this->acoofm_google_bucket = $this->acoofm_google_client->bucket($this->config['bucket_name']);
             } else {
                 add_action('admin_notices', function (){
@@ -230,9 +230,9 @@ class ACOOFMF_GOOGLE
                     );
                 }
 
-                $googleClient = new StorageClient([
+                $googleClient = new StorageClient(acoofm_google_client_args([
                     'keyFilePath' => $file_path,
-                ]);
+                ]));
 
                 try {
                     $buckets = $googleClient->buckets();
@@ -298,9 +298,9 @@ class ACOOFMF_GOOGLE
                 }
 
                 // Initialize Google Cloud Storage client with service account credentials
-                $storage = new Google\Cloud\Storage\StorageClient([
+                $storage = new Google\Cloud\Storage\StorageClient(acoofm_google_client_args([
                     'keyFilePath' => $file_path,
-                ]);
+                ]));
 
                 // Create the bucket
                 $bucket = $storage->createBucket($bucket_name, [
@@ -372,9 +372,9 @@ class ACOOFMF_GOOGLE
 
         try {
             // Initialize Google Cloud Storage client
-            $googleClient = new StorageClient([
+            $googleClient = new StorageClient(acoofm_google_client_args([
                 'keyFilePath' => $config_file,
-            ]);
+            ]));
 
             $bucket = $googleClient->bucket($bucket_name);
 
@@ -423,17 +423,9 @@ class ACOOFMF_GOOGLE
 
             $options = ['name' => $fileName];
 
-            // If user enabled ACL → make object public
-            $settings = acoofm_get_settings();
-            if (!empty($settings['enable_gcs_acl'])) {
-                $options['predefinedAcl'] = 'publicRead';
-            }
-
             try {
-                $upload = $bucket->upload(
-                    fopen($verify_path, "r"),
-                    $options
-                );
+                // publicRead when "Enable Legacy ACL" is on, unless the bucket rejects object ACLs.
+                $upload = $this->upload_object($bucket, $bucket_name, $verify_path, $options);
             } catch (Exception $e) {
                 @unlink($verify_path);
                 return ACOOFMF_VERIFY_HELPER::failure_from_classified(
@@ -569,8 +561,7 @@ class ACOOFMF_GOOGLE
     public function make_private($key) {
         if(!$key) return false;
         $object = $this->acoofm_google_bucket->object($key);
-        $settings = acoofm_get_settings();
-        if ($object->exists() && isset($settings['enable_gcs_acl']) && $settings['enable_gcs_acl']) {
+        if ($object->exists() && $this->use_object_acl($this->acoofm_google_bucket_name)) {
             $object->update(['acl' => []], ['predefinedAcl' => 'private']);
             return true;
         }
@@ -587,8 +578,7 @@ class ACOOFMF_GOOGLE
     public function make_public($key) {
         if(!$key) return false;
         $object = $this->acoofm_google_bucket->object($key);
-        $settings = acoofm_get_settings();
-        if ($object->exists() && isset($settings['enable_gcs_acl']) && $settings['enable_gcs_acl']) {
+        if ($object->exists() && $this->use_object_acl($this->acoofm_google_bucket_name)) {
             $object->update(['acl' => []], ['predefinedAcl' => 'publicRead']);
             return true;
         }
@@ -620,12 +610,7 @@ class ACOOFMF_GOOGLE
                         $options = [
                             'name' => $upload_path,
                         ];
-                        $settings = acoofm_get_settings();
-                        if (isset($settings['enable_gcs_acl']) && $settings['enable_gcs_acl']) {
-                            $options['predefinedAcl'] = 'publicRead';
-                        }
-
-                        $upload = $this->acoofm_google_bucket->upload(fopen($media_absolute_path, 'r'), $options);
+                        $upload = $this->upload_object($this->acoofm_google_bucket, $this->acoofm_google_bucket_name, $media_absolute_path, $options);
 
                         $object = $this->acoofm_google_bucket->object($upload_path);
 
@@ -648,7 +633,7 @@ class ACOOFMF_GOOGLE
                         $result = array(
                             'success' => false,
                             'code' => $e->getCode(),
-                            'Message' => $e->getMessage(),
+                            'Message' => acoofm_get_gcs_error_message($e),
                         );
                     }
                 } else {
@@ -659,12 +644,7 @@ class ACOOFMF_GOOGLE
                             'chunkSize' => 262144 * 2, // 512KB
                         ];
 
-                        $settings = acoofm_get_settings();
-                        if (isset($settings['enable_gcs_acl']) && $settings['enable_gcs_acl']) {
-                            $options['predefinedAcl'] = 'publicRead';
-                        }
-
-                        $upload = $this->acoofm_google_bucket->upload(fopen($media_absolute_path, 'r'), $options);
+                        $upload = $this->upload_object($this->acoofm_google_bucket, $this->acoofm_google_bucket_name, $media_absolute_path, $options);
 
                         $object = $this->acoofm_google_bucket->object($upload_path);
 
@@ -687,7 +667,7 @@ class ACOOFMF_GOOGLE
                         $result = array(
                             'success' => false,
                             'code' => $e->getCode(),
-                            'Message' => $e->getMessage(),
+                            'Message' => acoofm_get_gcs_error_message($e),
                         );
                     }
                 }
@@ -783,7 +763,7 @@ class ACOOFMF_GOOGLE
             try {
                 $object = $this->acoofm_google_bucket->object($key);
 
-                $expires = isset($this->settings['presigned_expire']) ? $this->settings['presigned_expire'] : 20;
+                $expires = acoofm_get_presigned_expire_minutes($this->settings);
 
                 $presignedUrl =  $object->signedUrl(new \DateTime(sprintf('+%s  minutes', $expires)));
 
@@ -816,6 +796,67 @@ class ACOOFMF_GOOGLE
             );
         }
         return $result;
+    }
+
+    /**
+     * Whether to send the publicRead object ACL ("Enable Legacy ACL").
+     *
+     * Not for buckets with uniform bucket-level access, which reject object
+     * ACLs; a bucket is remembered the first time Google refuses one, and
+     * public access then comes from its IAM policy.
+     *
+     * @param string $bucket_name Bucket name.
+     * @return boolean
+     */
+    private function use_object_acl($bucket_name)
+    {
+        $settings = acoofm_get_settings();
+        $disabled = get_option('acoofm_gcs_acl_disabled_buckets', array());
+        $use_acl  = !empty($settings['enable_gcs_acl']) && !(is_array($disabled) && !empty($disabled[$bucket_name]));
+
+        return (bool) apply_filters('acoofm_gcs_use_object_acl', $use_acl, $bucket_name);
+    }
+
+    /**
+     * Remember that a bucket rejects object ACLs.
+     *
+     * @param string $bucket_name Bucket name.
+     * @return void
+     */
+    private function disable_object_acl($bucket_name)
+    {
+        $disabled = get_option('acoofm_gcs_acl_disabled_buckets', array());
+        if (!is_array($disabled)) {
+            $disabled = array();
+        }
+        $disabled[$bucket_name] = true;
+        update_option('acoofm_gcs_acl_disabled_buckets', $disabled, true);
+    }
+
+    /**
+     * Upload with the publicRead ACL, or without it when the bucket rejects ACLs.
+     *
+     * @param \Google\Cloud\Storage\Bucket $bucket      Bucket.
+     * @param string                       $bucket_name Bucket name.
+     * @param string                       $file_path   Absolute file path.
+     * @param array                        $options     Upload options (name, chunkSize).
+     * @return \Google\Cloud\Storage\StorageObject
+     */
+    private function upload_object($bucket, $bucket_name, $file_path, array $options)
+    {
+        if (!$this->use_object_acl($bucket_name)) {
+            return $bucket->upload(fopen($file_path, 'r'), $options);
+        }
+
+        try {
+            return $bucket->upload(fopen($file_path, 'r'), $options + ['predefinedAcl' => 'publicRead']);
+        } catch (Exception $e) {
+            if (!acoofm_is_gcs_acl_not_supported_error($e)) {
+                throw $e;
+            }
+            $this->disable_object_acl($bucket_name);
+            return $bucket->upload(fopen($file_path, 'r'), $options);
+        }
     }
 
     private function generate_file_url($key)

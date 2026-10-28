@@ -166,7 +166,7 @@ class ACOOFMF_S3
             ];
 
             $credentials = apply_filters('acoofm_s3_client_credentials', $credentials, $this->config);      
-            $this->acoofm_S3_Client = new S3Client($credentials);
+            $this->acoofm_S3_Client = new S3Client(acoofm_s3_client_args($credentials));
         }
     }
 
@@ -196,7 +196,7 @@ class ACOOFMF_S3
                     ],
                 ];
                 $credentials = apply_filters('acoofm_s3_client_credentials', $credentials, $this->config);
-                $s3 = new S3Client($credentials);
+                $s3 = new S3Client(acoofm_s3_client_args($credentials));
 
                 try {
                     $result = $s3->listBuckets();
@@ -286,15 +286,15 @@ class ACOOFMF_S3
                     ],
                 ];
                 $credentials = apply_filters('acoofm_s3_client_credentials', $credentials, $this->config);
-                $s3Client = new S3Client($credentials);
+                $s3Client = new S3Client(acoofm_s3_client_args($credentials));
 
-                // Create the bucket
-                $result = $s3Client->createBucket([
-                    'Bucket' => $bucket_name,
-                    'CreateBucketConfiguration' => [
-                        'LocationConstraint' => $region,
-                    ],
-                ]);
+                // Create the bucket. us-east-1 is the default location and S3
+                // rejects it as an explicit LocationConstraint.
+                $create_args = ['Bucket' => $bucket_name];
+                if ($region !== 'us-east-1') {
+                    $create_args['CreateBucketConfiguration'] = ['LocationConstraint' => $region];
+                }
+                $result = $s3Client->createBucket($create_args);
 
                 // Wait until the bucket is created
                 $s3Client->waitUntil('BucketExists', [
@@ -322,33 +322,16 @@ class ACOOFMF_S3
                     ]
                 ]);
                 
-                // Set bucket policy for all users
+                // Public read access for media URLs. Uploads, deletes and listing
+                // use the signed credentials above, so anonymous users get nothing else.
                 $policy = [
                     'Version' => '2012-10-17',
                     'Statement' => [
                         [
                             'Effect' => 'Allow',
-                            'Principal' => '*', // Grant to all AWS users
-                            'Action' => [
-                                's3:DeleteObjectTagging',
-                                's3:ListBucketMultipartUploads',
-                                's3:DeleteObjectVersion',
-                                's3:ListBucket',
-                                's3:DeleteObjectVersionTagging',
-                                's3:GetBucketAcl',
-                                's3:ListMultipartUploadParts',
-                                's3:PutObject',
-                                's3:GetObjectAcl',
-                                's3:GetObject',
-                                's3:AbortMultipartUpload',
-                                's3:DeleteObject',
-                                's3:GetBucketLocation',
-                                's3:PutObjectAcl'
-                            ],
-                            'Resource' => [
-                                "arn:aws:s3:::{$bucket_name}/*",
-                                "arn:aws:s3:::{$bucket_name}"
-                            ]
+                            'Principal' => '*',
+                            'Action' => 's3:GetObject',
+                            'Resource' => "arn:aws:s3:::{$bucket_name}/*"
                         ]
                     ]
                 ];
@@ -369,7 +352,7 @@ class ACOOFMF_S3
                             [
                                 'AllowedHeaders' => ['*'],
                                 'AllowedMethods' => ['GET', 'PUT', 'POST', 'DELETE', 'HEAD'],
-                                'AllowedOrigins' => [$_SERVER['HTTP_ORIGIN']],
+                                'AllowedOrigins' => [!empty($_SERVER['HTTP_ORIGIN']) ? esc_url_raw(wp_unslash($_SERVER['HTTP_ORIGIN'])) : untrailingslashit(home_url())],
                                 'ExposeHeaders' => ['ETag', 'Content-Length', 'Content-Type'],
                                 'MaxAgeSeconds' => 3000
                             ]
@@ -386,6 +369,9 @@ class ACOOFMF_S3
                 return array('message' => $msg, 'code' => 200, 'success' => true);
             } catch (Aws\S3\Exception\S3Exception $ex) {
                 return array('message' => $ex->getAwsErrorMessage() ?? __('Please check the authorization details', 'offload-media-cloud-storage'), 'code' => $ex->getStatusCode() ?? 405, 'success' => false);
+            } catch (Exception $ex) {
+                // e.g. the BucketExists waiter timing out or a network error
+                return array('message' => $ex->getMessage(), 'code' => 500, 'success' => false);
             }
         } else {
             return array( 'message' => __('Insufficient Data. Please try again', 'offload-media-cloud-storage'), 'code' =>  405, 'success' => false);
@@ -428,7 +414,7 @@ class ACOOFMF_S3
             // Allow other plugins to modify config
             $credentials = apply_filters('acoofm_s3_client_credentials', $credentials, $this->config);
 
-            $s3Client = new S3Client($credentials);
+            $s3Client = new S3Client(acoofm_s3_client_args($credentials));
 
             /** --------------------------------------------------------
              * STEP 2: Scoped bucket access check (no account-wide list)
@@ -462,12 +448,7 @@ class ACOOFMF_S3
              * STEP 4: Upload test file
              * -------------------------------------------------------- */
             try {
-                $upload = $s3Client->putObject([
-                    'Bucket' => $bucket_name,
-                    'Key'    => $fileName,
-                    'Body'   => fopen($filePath, "r"),
-                    'ACL'    => 'public-read'
-                ]);
+                $upload = $this->put_object($s3Client, $bucket_name, $fileName, $filePath);
             } catch (Exception $e) {
                 @unlink($filePath);
                 return ACOOFMF_VERIFY_HELPER::failure_from_classified(
@@ -654,12 +635,7 @@ class ACOOFMF_S3
                 if (filesize($media_absolute_path) <= ACOOFM_S3_MULTIPART_UPLOAD_MINIMUM_SIZE) {
                     // Upload a publicly accessible file. The file size and type are determined by the SDK.
                     try {
-                        $upload = $this->acoofm_S3_Client->putObject([
-                            'Bucket' => $this->config['bucket_name'],
-                            'Key'    => $upload_path,
-                            'Body'   => fopen($media_absolute_path, 'r'),
-                            'ACL'    => 'public-read', // make file 'public'
-                        ]);
+                        $upload = $this->put_object($this->acoofm_S3_Client, $this->config['bucket_name'], $upload_path, $media_absolute_path);
 
                         $result = array(
                             'success'   => true,
@@ -676,22 +652,8 @@ class ACOOFMF_S3
                         );
                     }
                 } else {
-                    $multiUploader = new MultipartUploader($this->acoofm_S3_Client, $media_absolute_path, [
-                        'bucket'    => $this->config['bucket_name'],
-                        'key'       => $upload_path,
-                        'acl'       => 'public-read', // make file 'public'
-                    ]);
-                    
                     try {
-                        do {
-                            try {
-                                $uploaded = $multiUploader->upload();
-                            } catch (MultipartUploadException $e) {
-                                $multiUploader = new MultipartUploader($this->acoofm_S3_Client, $media_absolute_path, [
-                                    'state' => $e->getState(),
-                                ]);
-                            }
-                        } while (!isset($uploaded));
+                        $uploaded = $this->multipart_upload($this->config['bucket_name'], $upload_path, $media_absolute_path);
 
                         if (isset($uploaded['ObjectURL']) && !empty($uploaded['ObjectURL'])) {
                             $result = array(
@@ -806,6 +768,104 @@ class ACOOFMF_S3
     }
 
     /**
+     * Whether uploads to a bucket send the public-read object ACL.
+     *
+     * Buckets with Object Ownership "Bucket owner enforced" (the S3 default
+     * since April 2023) reject every ACL. Such a bucket is remembered the
+     * first time S3 refuses one; public access then comes from its bucket policy.
+     *
+     * @param string $bucket_name Bucket name.
+     * @return boolean
+     */
+    private function use_object_acl($bucket_name)
+    {
+        $disabled = get_option('acoofm_s3_acl_disabled_buckets', array());
+        $use_acl  = !(is_array($disabled) && !empty($disabled[$bucket_name]));
+
+        return (bool) apply_filters('acoofm_s3_use_object_acl', $use_acl, $bucket_name);
+    }
+
+    /**
+     * Remember that a bucket rejects object ACLs.
+     *
+     * @param string $bucket_name Bucket name.
+     * @return void
+     */
+    private function disable_object_acl($bucket_name)
+    {
+        $disabled = get_option('acoofm_s3_acl_disabled_buckets', array());
+        if (!is_array($disabled)) {
+            $disabled = array();
+        }
+        $disabled[$bucket_name] = true;
+        update_option('acoofm_s3_acl_disabled_buckets', $disabled, true);
+    }
+
+    /**
+     * putObject with the public-read ACL, or without it when the bucket rejects ACLs.
+     *
+     * @param S3Client $client      S3 client.
+     * @param string   $bucket_name Bucket name.
+     * @param string   $key         Object key.
+     * @param string   $file_path   Absolute file path.
+     * @return \Aws\ResultInterface
+     */
+    private function put_object($client, $bucket_name, $key, $file_path)
+    {
+        $args = [
+            'Bucket' => $bucket_name,
+            'Key'    => $key,
+            'Body'   => fopen($file_path, 'r'),
+        ];
+
+        if (!$this->use_object_acl($bucket_name)) {
+            return $client->putObject($args);
+        }
+
+        try {
+            return $client->putObject($args + ['ACL' => 'public-read']);
+        } catch (AwsException $e) {
+            if (!acoofm_is_acl_not_supported_error($e)) {
+                throw $e;
+            }
+            $this->disable_object_acl($bucket_name);
+            $args['Body'] = fopen($file_path, 'r');
+            return $client->putObject($args);
+        }
+    }
+
+    /**
+     * Multipart upload with the public-read ACL, or without it when the bucket rejects ACLs.
+     *
+     * @param string $bucket_name Bucket name.
+     * @param string $key         Object key.
+     * @param string $file_path   Absolute file path.
+     * @return \Aws\ResultInterface
+     * @throws MultipartUploadException
+     */
+    private function multipart_upload($bucket_name, $key, $file_path)
+    {
+        $options = [
+            'bucket' => $bucket_name,
+            'key'    => $key,
+        ];
+        if ($this->use_object_acl($bucket_name)) {
+            $options['acl'] = 'public-read';
+        }
+
+        try {
+            return acoofm_multipart_upload($this->acoofm_S3_Client, $file_path, $options);
+        } catch (MultipartUploadException $e) {
+            if (!isset($options['acl']) || !acoofm_is_acl_not_supported_error($e)) {
+                throw $e;
+            }
+            $this->disable_object_acl($bucket_name);
+            unset($options['acl']);
+            return acoofm_multipart_upload($this->acoofm_S3_Client, $file_path, $options);
+        }
+    }
+
+    /**
      * get presigned URL
      * @since 1.0.0
      * @return boolean
@@ -820,7 +880,7 @@ class ACOOFMF_S3
                     'Key'    => $key
                 ]);
 
-                $expires = isset($this->settings['presigned_expire']) ? $this->settings['presigned_expire'] : 20;
+                $expires = acoofm_get_presigned_expire_minutes($this->settings, 10080); // SigV4 maximum: 7 days
 
                 $request = $this->acoofm_S3_Client->createPresignedRequest($cmd, sprintf('+%s  minutes', $expires));
 

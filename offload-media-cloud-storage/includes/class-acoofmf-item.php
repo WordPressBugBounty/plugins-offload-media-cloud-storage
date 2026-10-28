@@ -234,43 +234,9 @@ class ACOOFMF_ITEM
                 isset($this->settings['presigned_expire']) && !empty($this->settings['presigned_expire']) &&
                 isset($data['path']) && !empty($data['path'])
             ) {
-                $preSignedUrl = acoofm_get_cache('presigned_url_full_' . $source_id, $source_id);
-                if ($preSignedUrl === false) {
-                    global $acoofmService, $acoofmProService;
-                    $service = null;
-                    if (isset($acoofmService) && is_object($acoofmService) && method_exists($acoofmService, 'get_presigned_url')) {
-                        $service = $acoofmService;
-                    } elseif (isset($acoofmProService) && is_object($acoofmProService) && method_exists($acoofmProService, 'get_presigned_url')) {
-                        $service = $acoofmProService;
-                    }
-                    $result = array();
-                    $savedPUrl = $this->acoofm_get_saved_presigned_url($source_id, 'full');
-                    $force = apply_filters('acoofm_force_to_change_presigned_url', false);
-                    // delete_post_meta( $source_id, 'acoofm_presigned_urls' );
-
-                    if ($service && (!$savedPUrl || $force)) {
-                        $result = $service->get_presigned_url($data['path']);
-                        $saved = $this->acoofm_update_presigned_url($result['file_url'], $source_id, 'full');
-                    }else if (!empty($savedPUrl)){
-                        $result['success'] = true;
-                        $result['file_url'] = $savedPUrl;
-                        $result['code'] = 200;
-                        $result['Message'] = 'Got Presigned URL Successfully';
-                    }
-
-                    if (isset($result)) {
-                        if (isset($result['success']) && $result['success']) {
-                            $preSignedUrl = $this->may_generate_cdn_url($result['file_url'], $data['path']);
-                            $expireMinutes = (int) $this->settings['presigned_expire'];
-                            $expireSeconds = $expireMinutes * 60;
-
-                            acoofm_set_cache('presigned_url_full_' . $source_id, $preSignedUrl, $source_id, $expireSeconds);
-                        }
-                    }
-                }
-                return $preSignedUrl;
+                $preSignedUrl = $this->get_presigned_object_url($source_id, 'full', $data['path']);
+                return $preSignedUrl ? $this->may_generate_cdn_url($preSignedUrl, $data['path']) : false;
             } else if (isset($data['url']) && !empty($data['url'])) {
-                $deleted = delete_post_meta( $source_id, 'acoofm_presigned_urls' );
                 return $this->may_generate_cdn_url($data['url'], $data['path']);
             }
         }
@@ -282,8 +248,69 @@ class ACOOFMF_ITEM
         $presigned_urls = get_post_meta( $attachment_id, 'acoofm_presigned_urls', true );
         if(isset($presigned_urls) && isset($presigned_urls[$size])){
             $url = $presigned_urls[$size];
+            // Saved with its key and expiry since get_presigned_object_url()
+            if (is_array($url)) {
+                $url = isset($url['url']) ? $url['url'] : '';
+            }
         }
         return $url;
+    }
+
+    /**
+     * Presigned URL of one object of an item.
+     *
+     * A saved URL is reused while at least half of its lifetime is left, so
+     * pages keep stable URLs (browser cache) but never get one that is about
+     * to expire. URLs saved by earlier versions have no expiry and are replaced.
+     *
+     * @param int    $source_id Attachment ID.
+     * @param string $size      'full', 'original' or an image size.
+     * @param string $key       Object key.
+     * @return string|false
+     */
+    private function get_presigned_object_url($source_id, $size, $key)
+    {
+        // Same lifetime the services' get_presigned_url() signs with.
+        $lifetime = acoofm_get_presigned_expire_minutes($this->settings, $this->service === 'google' ? 0 : 10080) * 60;
+
+        $presigned_urls = get_post_meta($source_id, 'acoofm_presigned_urls', true);
+        $saved = (is_array($presigned_urls) && isset($presigned_urls[$size])) ? $presigned_urls[$size] : null;
+        $force = apply_filters('acoofm_force_to_change_presigned_url', false);
+
+        if (
+            !$force && is_array($saved) &&
+            !empty($saved['url']) && isset($saved['key'], $saved['expires']) &&
+            $saved['key'] === $key &&
+            ((int) $saved['expires'] - time()) > ($lifetime / 2)
+        ) {
+            return $saved['url'];
+        }
+
+        global $acoofmService, $acoofmProService;
+        $service = null;
+        if (isset($acoofmService) && is_object($acoofmService) && method_exists($acoofmService, 'get_presigned_url')) {
+            $service = $acoofmService;
+        } elseif (isset($acoofmProService) && is_object($acoofmProService) && method_exists($acoofmProService, 'get_presigned_url')) {
+            $service = $acoofmProService;
+        }
+        if (!$service) {
+            return false;
+        }
+
+        // Taken before signing, so the saved expiry is never later than the real one.
+        $signed_at = time();
+        $result = $service->get_presigned_url($key);
+        if (!(isset($result['success']) && $result['success'] && !empty($result['file_url']))) {
+            return false;
+        }
+
+        $this->acoofm_update_presigned_url(array(
+            'url'     => $result['file_url'],
+            'key'     => $key,
+            'expires' => $signed_at + $lifetime,
+        ), $source_id, $size);
+
+        return $result['file_url'];
     }
 
     public function acoofm_update_presigned_url($url, $attachment_id, $size = 'full') {
@@ -364,7 +391,7 @@ class ACOOFMF_ITEM
                         $local_files['full']   = $file_path;
                     }
                 }
-                $extras = $acoofmItem->get_extras((int) $source_id) ? $acoofmItem->get_extras((int) $source_id) : [];
+                $extras = $this->get_extras((int) $source_id) ? $this->get_extras((int) $source_id) : [];
                 if (isset($extras['sizes']) && !empty($extras['sizes'])) {
                     $sizes = $extras['sizes'];
                     if(isset($sizes[$size]) && !empty($sizes[$size])) {
@@ -409,7 +436,7 @@ class ACOOFMF_ITEM
                         }
                     }
                 } else {
-                    $extras = $acoofmItem->get_extras((int) $source_id) ? $acoofmItem->get_extras((int) $source_id) : [];
+                    $extras = $this->get_extras((int) $source_id) ? $this->get_extras((int) $source_id) : [];
                     if (isset($extras['sizes']) && !empty($extras['sizes'])) {
                         $sizes = $extras['sizes'];
                         if(isset($sizes[$size]) && !empty($sizes[$size])) {
@@ -451,34 +478,8 @@ class ACOOFMF_ITEM
                     isset($this->settings['enable_presigned']) && $this->settings['enable_presigned'] &&
                     isset($data['path']) && !empty($data['path'])
                 ) {
-                    $preSignedUrl = acoofm_get_cache('presigned_url_full_' . $source_id, $source_id);
-                    if ($preSignedUrl === false) {
-
-                        global $acoofmService, $acoofmProService;
-                        $service = null;
-                        if (isset($acoofmService) && is_object($acoofmService) && method_exists($acoofmService, 'get_presigned_url')) {
-                            $service = $acoofmService;
-                        } elseif (isset($acoofmProService) && is_object($acoofmProService) && method_exists($acoofmProService, 'get_presigned_url')) {
-                            $service = $acoofmProService;
-                        }
-                        $result = false;
-                        if ($service) {
-                            $result = $service->get_presigned_url($data['path']);
-                        }
-
-                        if (!empty($result)) {
-                            if (isset($result['success']) && $result['success']) {
-                                $preSignedUrl = $this->may_generate_cdn_url($result['file_url'], $data['path']);
-                                $expireMinutes = (int) (isset($this->settings['presigned_expire']) && !empty($this->settings['presigned_expire']))
-                                ? $this->settings['presigned_expire']
-                                : 20;
-                                $expireSeconds = $expireMinutes * 60;
-
-                                acoofm_set_cache('presigned_url_full_' . $source_id, $preSignedUrl, $source_id, $expireSeconds);
-                            }
-                        }
-                    }
-                    return $preSignedUrl;
+                    $preSignedUrl = $this->get_presigned_object_url($source_id, 'full', $data['path']);
+                    return $preSignedUrl ? $this->may_generate_cdn_url($preSignedUrl, $data['path']) : false;
                 } else if (isset($data['url']) && !empty($data['url'])) {
                     return $this->may_generate_cdn_url($data['url'], $data['path']);
                 }
@@ -495,43 +496,8 @@ class ACOOFMF_ITEM
                         isset($this->settings['enable_presigned']) && $this->settings['enable_presigned'] &&
                         isset($thumb['path']) && !empty($thumb['path'])
                     ) {
-                        $preSignedUrl = acoofm_get_cache('presigned_url_' . $size . '_' . $source_id, $source_id);
-                        if ($preSignedUrl === false) {
-                            global $acoofmService, $acoofmProService;
-                            $service = null;
-                            if (isset($acoofmService) && is_object($acoofmService) && method_exists($acoofmService, 'get_presigned_url')) {
-                                $service = $acoofmService;
-                            } elseif (isset($acoofmProService) && is_object($acoofmProService) && method_exists($acoofmProService, 'get_presigned_url')) {
-                                $service = $acoofmProService;
-                            }
-
-                            $result = array();
-                            $savedPUrl = $this->acoofm_get_saved_presigned_url($source_id, $size);
-                            $force = apply_filters('acoofm_force_to_change_presigned_url', false);
-
-                            if ($service && (!$savedPUrl || $force)) {
-                                $result = $service->get_presigned_url($thumb['path']);
-                                $this->acoofm_update_presigned_url($result['file_url'], $source_id, $size);
-                            } else if (!empty($savedPUrl)) {
-                                $result['success'] = true;
-                                $result['file_url'] = $savedPUrl;
-                                $result['code'] = 200;
-                                $result['Message'] = 'Got Presigned URL Successfully';
-                            }
-
-                            if (!empty($result)) {
-                                if (isset($result['success']) && $result['success']) {
-                                    $preSignedUrl = $this->may_generate_cdn_url($result['file_url'], $thumb['path']);
-                                    $expireMinutes = (int) (isset($this->settings['presigned_expire']) && !empty($this->settings['presigned_expire']))
-                                    ? $this->settings['presigned_expire']
-                                    : 20;
-                                    $expireSeconds = $expireMinutes * 60;
-
-                                    acoofm_set_cache('presigned_url_' . $size . '_' . $source_id, $preSignedUrl, $source_id, $expireSeconds);
-                                }
-                            }
-                        }
-                        return $preSignedUrl;
+                        $preSignedUrl = $this->get_presigned_object_url($source_id, $size, $thumb['path']);
+                        return $preSignedUrl ? $this->may_generate_cdn_url($preSignedUrl, $thumb['path']) : false;
                     } else if (isset($thumb['url']) && !empty($thumb['url'])) {
                         return $this->may_generate_cdn_url($thumb['url'], $thumb['path']);
                     }
@@ -545,43 +511,8 @@ class ACOOFMF_ITEM
                         isset($this->settings['enable_presigned']) && $this->settings['enable_presigned'] &&
                         isset($original['key']) && !empty($original['key'])
                     ) {
-                        $preSignedUrl = acoofm_get_cache('presigned_url_original_' . $source_id, $source_id);
-                        if ($preSignedUrl === false) {
-                            global $acoofmService, $acoofmProService;
-                            $service = null;
-                            if (isset($acoofmService) && is_object($acoofmService) && method_exists($acoofmService, 'get_presigned_url')) {
-                                $service = $acoofmService;
-                            } elseif (isset($acoofmProService) && is_object($acoofmProService) && method_exists($acoofmProService, 'get_presigned_url')) {
-                                $service = $acoofmProService;
-                            }
-
-                            $result = array();
-                            $savedPUrl = $this->acoofm_get_saved_presigned_url($source_id, 'original');
-                            $force = apply_filters('acoofm_force_to_change_presigned_url', false);
-
-                            if ($service && (!$savedPUrl || $force)) {
-                                $result = $service->get_presigned_url($original['key']);
-                                $this->acoofm_update_presigned_url($result['file_url'], $source_id, 'original');
-                            } else if (!empty($savedPUrl)) {
-                                $result['success'] = true;
-                                $result['file_url'] = $savedPUrl;
-                                $result['code'] = 200;
-                                $result['Message'] = 'Got Presigned URL Successfully';
-                            }
-
-                            if (!empty($result)) {
-                                if (isset($result['success']) && $result['success']) {
-                                    $preSignedUrl = $this->may_generate_cdn_url($result['file_url'], $original['key']);
-                                    $expireMinutes = (int) (isset($this->settings['presigned_expire']) && !empty($this->settings['presigned_expire']))
-                                    ? $this->settings['presigned_expire']
-                                    : 20;
-                                    $expireSeconds = $expireMinutes * 60;
-
-                                    acoofm_set_cache('presigned_url_original_' . $source_id, $preSignedUrl, $source_id, $expireSeconds);
-                                }
-                            }
-                        }
-                        return $preSignedUrl;
+                        $preSignedUrl = $this->get_presigned_object_url($source_id, 'original', $original['key']);
+                        return $preSignedUrl ? $this->may_generate_cdn_url($preSignedUrl, $original['key']) : false;
                     } else if (isset($original['file_url']) && !empty($original['file_url'])) {
                         return $this->may_generate_cdn_url($original['file_url'], $original['key']);
                     }
@@ -665,7 +596,7 @@ class ACOOFMF_ITEM
     {
         global $wpdb;
         if (isset($path) && !empty($path)) {
-            $results = $wpdb->get_results("SELECT source_path FROM " . ACOOFM_ITEM_TABLE . " WHERE source_path LIKE '$path%'", ARRAY_A);
+            $results = $wpdb->get_results($wpdb->prepare("SELECT source_path FROM " . ACOOFM_ITEM_TABLE . " WHERE source_path LIKE %s", $wpdb->esc_like($path) . '%'), ARRAY_A);
             if ($wpdb->last_error || null === $results || !(isset($results) && !empty($results))) {
                 return false;
             }
@@ -778,7 +709,8 @@ class ACOOFMF_ITEM
      */
     public function is_available_from_provider($source_id, $check_rewrite = true)
     {
-        $item_id = acoofm_get_post_meta($source_id, ACOOFM_ATTACHMENT_META_KEY, true, true);
+        // Cached post meta: this runs for every image URL on a page.
+        $item_id = get_post_meta((int) $source_id, ACOOFM_ATTACHMENT_META_KEY, true);
         if(!(isset($item_id) && !empty($item_id))) {
             return false;
         }
@@ -888,12 +820,13 @@ class ACOOFMF_ITEM
 
     public function get_columns($provider = null, $columns = '*', $where='1', $limit = PHP_INT_MAX, $offset = 0) {
         global $wpdb;
-        $query = "SELECT 
-                        $columns FROM " . ACOOFM_ITEM_TABLE . " 
-                    WHERE 
-                        ($where) AND
-                        provider='$provider'
-                    LIMIT $offset,$limit";
+        // $columns and $where are SQL fragments from code, never from user input.
+        $query = $wpdb->prepare(
+            "SELECT $columns FROM " . ACOOFM_ITEM_TABLE . " WHERE ($where) AND provider = %s LIMIT %d, %d",
+            (string) $provider,
+            $offset,
+            $limit
+        );
 
         $results = $wpdb->get_results($query, ARRAY_A);
 
